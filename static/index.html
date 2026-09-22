@@ -1306,6 +1306,14 @@ function paint() {
   if (!b.over) {
     for (const m of preview) {
       if (m.kind !== 'reveal') continue;
+      // 必须跳过**已经揭开**的格子。
+      // 预览是在上一步之后算的，如果那一步正好把预览里的第一格揭开了，
+      // 或者玩家手动点了它，preview 里就会残留一个已完成的走法 ——
+      // 直接照画就会在已翻开的数字上盖一个白色大数字
+      //（用户截图里那个"白色的 1"就是这么来的）。
+      const [pr, pc] = key2rc(m.key);
+      const px = b.cells[pr] && b.cells[pr][pc];
+      if (!px || px.op || px.flag) continue;
       seq++;
       if (seq <= 4) stepNo.set(m.key, seq);
     }
@@ -1452,7 +1460,9 @@ function finishRun(reason) {
   }
   if (reason === 'stop') txt += '（手动停止）';
   if (RUN.stalled) txt += ` 其中 ${RUN.stalled} 局卡住。`;
-  if (RUN.errors) txt += ` ${RUN.errors} 局出错。`;
+  if (RUN.errors) txt += ` ${RUN.errors} 局出错`;
+  if (RUN.firstErr) txt += `（首个错误：${String(RUN.firstErr).slice(0,90)}）`;
+  else if (RUN.errors) txt += '。';
   el('runNote').textContent = txt;
   setStatus(txt);
 }
@@ -1584,25 +1594,45 @@ function solverSource() {
   // 注意：<script> 里的顶层声明位于全局**词法**作用域，不会挂到 globalThis，
   // 所以必须用标识符直接引用（早先用 globalThis[n] 查表，取到的全是 undefined，
   // 结果 Worker 里没有 Board 等定义，100 局全部报错）。
+  // 求解器用到的**全部**辅助函数。漏一个就会在 Worker 里抛 ReferenceError，
+  // 而 Worker 的 catch 会把整局记为"出错" —— 之前 100 局里 93 局出错，
+  // 就是因为 gp0（planMoves 里新增的密度估计）没加进这个列表。
   const parts = [
     'let COLS=30, ROWS=16, MINES=99;',
     'const solverFlags=new Set(); let preview=[]; let stuckNow=false;',
     'function density(){return MINES/(COLS*ROWS);}',
     'const NB = ' + JSON.stringify(NB) + ';',
     (typeof Board !== 'undefined' ? Board.toString() : ''),
-    buildConstraints.toString(), key2rc.toString(), components.toString(),
-    enumerateGroup.toString(), combineGlobally.toString(),
-    binom.toString(), logBinom.toString(), lgamma.toString(), logBinomSafe.toString(),
-    splitGroup.toString(), solve.toString(), planMoves.toString(),
-    cloneBoard.toString(), applyMove.toString(), countHidden.toString(),
-    estimateGlobal.toString(), pot.toString(), hintWorthy.toString(),
   ];
-  return parts.filter(p => p && p.length).join(String.fromCharCode(10));
+  // 自检：只核对**确实需要序列化**的那批顶层函数，别去猜源码里的标识符
+  // —— planMoves/solve 内部有大量局部变量（C、P）和 Board 的方法（plant），
+  // 按名字硬猜会误报，反而挡住正常运行。
+  const missing = [];
+  for (const [name, fn] of Object.entries({
+      buildConstraints, key2rc, components, enumerateGroup, combineGlobally,
+      binom, logBinom, lgamma, logBinomSafe, splitGroup, solve, planMoves,
+      cloneBoard, applyMove, countHidden, estimateGlobal, pot, hintWorthy, gp0})) {
+    if (typeof fn !== 'function') missing.push(name);
+  }
+  if (typeof Board === 'undefined') missing.push('Board');
+  // 真正有用的检查：这些函数的源码是否都在拼出来的字符串里
+  for (const [name, fn] of Object.entries({gp0, planMoves, solve, applyMove, cloneBoard})) {
+    if (typeof fn === 'function' && !parts.join(String.fromCharCode(10)).includes(fn.toString())) {
+      missing.push(name + '(未拼入)');
+    }
+  }
+  return {src: parts.join(String.fromCharCode(10)), missing: missing};
 }
 
 function startWorkerRun() {
   try {
-    const body = solverSource();
+    const _s = solverSource();
+    const body = _s.src;
+    if (_s.missing && _s.missing.length) {
+      el('runNote').textContent = '内部错误：Worker 缺少函数 ' + _s.missing.join(', ');
+      finishRun('error');
+      return;
+    }
     const workerCode = body + `
       self.onmessage = function(ev){
         const {n, cols, rows, mines, depth} = ev.data;
@@ -1644,12 +1674,12 @@ function startWorkerRun() {
             }
             if(b.win) wins++;
             guessSum+=guesses; deduceSum+=deduced;
-          } catch(e){ errors++; }
+          } catch(e){ errors++; if(!self.__firstErr) self.__firstErr = String(e && e.message || e); }
           if ((g+1) % 5 === 0 || g === n-1) {
-            self.postMessage({type:'progress', done:g+1, wins, guessSum, deduceSum, stalled, errors});
+            self.postMessage({type:'progress', done:g+1, wins, guessSum, deduceSum, stalled, errors, firstErr:self.__firstErr||null});
           }
         }
-        self.postMessage({type:'done', done:n, wins, guessSum, deduceSum, stalled, errors});
+        self.postMessage({type:'done', done:n, wins, guessSum, deduceSum, stalled, errors, firstErr:self.__firstErr||null});
       };
     `;
     const blob = new Blob([workerCode], {type: 'application/javascript'});
@@ -1660,6 +1690,7 @@ function startWorkerRun() {
       RUN.done = d.done; RUN.wins = d.wins;
       RUN.guessSum = d.guessSum; RUN.deduceSum = d.deduceSum;
       RUN.stalled = d.stalled; RUN.errors = d.errors;
+      if (d.firstErr) RUN.firstErr = d.firstErr;
       updateRunKpis();
       if (d.type === 'done') {
         RUN_WORKER.terminate(); RUN_WORKER = null;
