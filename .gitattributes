@@ -1,0 +1,16 @@
+# run.bat 是 GBK + CRLF 的 Windows 批处理，必须完全按二进制处理，
+# 否则 git 会把它当文本转换行尾（CRLF→LF），在 cmd 里直接坏掉。
+run.bat binary
+
+# shell 脚本必须 LF
+*.sh text eol=lf
+
+# 图片
+*.png binary
+
+# 其余文本文件统一 LF（仓库内），避免跨平台差异
+*.md text eol=lf
+*.py text eol=lf
+*.html text eol=lf
+.gitignore text eol=lf
+LICENSE text eol=lf

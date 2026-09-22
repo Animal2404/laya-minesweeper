@@ -1,0 +1,874 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Laya 扫雷 · 再想三步，再落一子</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#f2f3f7; --card:#ffffff; --board:#e9ecf2; --line:#d8dce6;
+    --fg:#1c2130; --dim:#6b7280; --blue:#2f6fed; --blue2:#2559c4;
+    --num1:#2f6fed; --num2:#1a9e5c; --num3:#e0453a; --num4:#7b3fe4;
+    --num5:#b8752a; --num6:#159ea8; --flag:#e0453a;
+    --raised:#dfe3ec; --open:#eef0f5;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 20px 60px}
+
+  /* ---------- 头部 ---------- */
+  .hd{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:16px}
+  h1{font-size:27px;margin:0 0 5px;letter-spacing:-.02em}
+  .sub{color:var(--dim);font-size:13.5px}
+  .ctrls{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+  button{font:600 13.5px/1 inherit;padding:9px 16px;border-radius:9px;border:1px solid var(--line);
+    background:#fff;color:var(--fg);cursor:pointer;transition:.13s}
+  button:hover{background:#f7f8fb}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  button.primary:hover{background:var(--blue2)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .selwrap{display:flex;flex-direction:column;gap:3px;align-items:flex-end}
+  .selwrap label{font-size:11px;color:var(--dim)}
+  select{font:13px inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--line);
+    background:#fff;color:var(--fg)}
+
+  /* ---------- 数据条 ---------- */
+  .stats{display:flex;align-items:center;gap:34px;margin:14px 0 16px;flex-wrap:wrap}
+  .st{display:flex;flex-direction:column;gap:2px}
+  .st .k{font-size:11.5px;color:var(--dim)}
+  .st .v{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .legend{margin-left:auto;text-align:right;font-size:11.5px;color:var(--dim);line-height:1.85}
+
+  /* ---------- 棋盘 ---------- */
+  .boardwrap{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:12px;overflow:auto;box-shadow:0 1px 3px rgba(20,30,60,.05)}
+  .board{display:grid;gap:2px;margin:0 auto;width:max-content;
+    background:var(--board);padding:6px;border-radius:9px;user-select:none}
+  .cell{width:25px;height:25px;border-radius:3px;display:flex;align-items:center;justify-content:center;
+    font:700 13px/1 ui-monospace,Consolas,monospace;cursor:pointer;transition:background .08s}
+  .cell.hid{background:var(--raised);box-shadow:inset 0 -1px 0 rgba(0,0,0,.07)}
+  .cell.hid:hover{background:#d3d9e6}
+  .cell.op{background:var(--open);cursor:default}
+  .cell.op.blank{background:#f5f6f9}
+  .cell.mine{background:#fbdcd9}
+  .cell.boom{background:#f4a49d}
+  .cell.flag{color:var(--flag);font-size:14px}
+  .cell.hint{outline:2px solid var(--blue);outline-offset:-2px}
+  .cell.laya{outline:2px dashed #e08a2a;outline-offset:-2px}
+  .n1{color:var(--num1)}.n2{color:var(--num2)}.n3{color:var(--num3)}
+  .n4{color:var(--num4)}.n5{color:var(--num5)}.n6{color:var(--num6)}
+
+  /* ---------- 状态栏 ---------- */
+  .status{margin-top:14px;font-size:13px;color:var(--dim);min-height:22px;
+    display:flex;align-items:center;gap:8px}
+  .dots::after{content:'';animation:d 1.2s steps(4,end) infinite}
+  @keyframes d{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11.5px;font-weight:600}
+  .badge.ok{background:rgba(26,158,92,.13);color:#1a9e5c}
+  .badge.bad{background:rgba(224,69,58,.13);color:#e0453a}
+  .badge.warn{background:rgba(224,138,42,.15);color:#b8752a}
+
+  /* ---------- Laya 对比面板 ---------- */
+  .panel{margin-top:18px;background:var(--card);border:1px solid var(--line);
+    border-radius:12px;overflow:hidden}
+  .panel h2{font-size:13.5px;margin:0;padding:12px 15px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:9px;cursor:pointer}
+  .panel h2 .tag{font-weight:400;color:var(--dim);font-size:12px}
+  .panel .body{padding:0 15px 14px;display:none}
+  .panel.open .body{display:block}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{padding:8px 9px;text-align:left;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:600;font-size:11.5px}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .mini{height:5px;background:#e6e9f0;border-radius:3px;overflow:hidden;min-width:56px}
+  .mini>i{display:block;height:100%;background:#8b93a6}
+  .mini>i.layai{background:#e08a2a}
+  .empty{color:var(--dim);font-size:12.5px;padding:10px 0}
+  .note{color:var(--dim);font-size:11.5px;line-height:1.8;margin-top:12px}
+  code{background:#eef0f5;padding:1px 5px;border-radius:4px;font-size:11.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hd">
+    <div>
+      <h1>再想三步，再落一子。</h1>
+      <div class="sub">读懂已知数字，推演下一步。代码负责数学约束，Laya 负责判断。</div>
+    </div>
+    <div class="ctrls">
+      <button id="btnAuto" class="primary">让 Laya 来玩</button>
+      <button id="btnStep">预测一步</button>
+      <button id="btnReset">重新开局</button>
+      <div class="selwrap">
+        <label for="depth">推演深度</label>
+        <select id="depth">
+          <option value="1">1 步</option>
+          <option value="2">2 步</option>
+          <option value="3" selected>3 步</option>
+          <option value="4">4 步</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="st"><span class="k">剩余安全格</span><span class="v" id="sSafe">—</span></div>
+    <div class="st"><span class="k">地雷总数</span><span class="v" id="sMines">99</span></div>
+    <div class="st"><span class="k">已走步数</span><span class="v" id="sSteps">0</span></div>
+    <div class="st"><span class="k">本局用时</span><span class="v" id="sTime">0:00</span></div>
+    <div class="st"><span class="k">约束求解 本步/均值</span><span class="v" id="sSolve">— / —</span></div>
+    <div class="st"><span class="k">Laya 本步/p50</span><span class="v" id="sInfer">— / —</span></div>
+    <div class="legend">点击揭开 · 右键插旗<br>数字格上双击可和弦展开</div>
+  </div>
+
+  <div class="boardwrap"><div class="board" id="board"></div></div>
+
+  <div class="status" id="status">准备好了。点「让 Laya 来玩」或自己点格子。</div>
+
+  <div class="panel open" id="panel">
+    <h2 id="panelHd">Laya 的判断 vs 数学真值 <span class="tag" id="panelTag">（点开/收起）</span></h2>
+    <div class="body">
+      <table>
+        <thead><tr>
+          <th>待判格</th><th>周边的已知约束</th>
+          <th class="num">数学真值 P(雷)</th><th class="num">Laya P(雷)</th><th>对比</th>
+        </tr></thead>
+        <tbody id="cmpBody"><tr><td colspan="5" class="empty">还没跑过。点「预测一步」看两边各自的判断。</td></tr></tbody>
+      </table>
+      <div class="note" id="cmpNote"></div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>这里谁在干什么：</b>扫雷本质是约束满足问题 —— 每个已揭开的数字都给出一个等式
+    （「我周围还有 N 颗雷，分布在 M 个未揭开格里」）。<code>推演深度</code>控制代码做几轮约束传播
+    （单格推导 → 子集推导 的迭代），并对小规模连通块做<b>完全枚举</b>，从而算出每个待判格的<b>精确</b>含雷概率。<br>
+    <b>Laya 的作用：</b>代码把每个待判格变成一句中文描述（「它北面是已揭开的 1，该 1 周围还有 3 个未揭开格、其中还需 1 颗雷……」），
+    一次性问 Laya「这一格下面有地雷吗」。上面那张表把 Laya 的概率和数学真值并排显示，好判断它的判断到底值不值得信。<br>
+    <b>为什么必须这样接：</b>Laya 是文本蕴含模型，不是空间推理模型。直接问它「点哪个格子」会答错（我实测过它在贪吃蛇里
+    输给随机）。所以让它读<b>文字化后的约束</b>、做<b>是非判断</b>，把「选哪格」留给代码。
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+/* ==========================================================================
+ * 配置
+ * ======================================================================== */
+const COLS = 30, ROWS = 16, MINES = 99;
+const API = '/api/predict';
+/* 必须显式指定模型，不能交给 Router 自动路由：
+ * boards 的 state 是中文，Router 会判定「非拉丁文字 → multilingual」，
+ * 而本机只保留了 typed-decisions，multilingual 已被删除，
+ * 于是会抛 FileNotFoundError: Subfolder 'multilingual' not found（HTTP 500）。
+ * 需要别的模型时用 ?model=xxx 覆盖。 */
+const MODEL = new URLSearchParams(location.search).get('model') || 'typed-decisions';
+
+/* ==========================================================================
+ * 棋盘
+ * ======================================================================== */
+const NB = [];
+for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++)
+  if (dr || dc) NB.push([dr, dc]);
+
+class Board {
+  constructor() { this.reset(); }
+  reset() {
+    this.cells = Array.from({length: ROWS}, () => Array.from({length: COLS},
+      () => ({mine: false, op: false, flag: false, adj: 0})));
+    this.started = false; this.over = false; this.win = false;
+    this.revealed = 0; this.flags = 0; this.steps = 0;
+    this.t0 = 0; this.elapsed = 0;
+  }
+  inside(r, c) { return r >= 0 && r < ROWS && c >= 0 && c < COLS; }
+  nb(r, c) {
+    const out = [];
+    for (const [dr, dc] of NB) if (this.inside(r+dr, c+dc)) out.push([r+dr, c+dc]);
+    return out;
+  }
+  /** 首次点击后再布雷，保证第一下不踩雷 */
+  plant(sr, sc) {
+    const safe = new Set([sr + ',' + sc]);
+    for (const [r, c] of this.nb(sr, sc)) safe.add(r + ',' + c);
+    const pool = [];
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
+      if (!safe.has(r + ',' + c)) pool.push([r, c]);
+    // Fisher-Yates，取前 MINES 个
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    for (let i = 0; i < MINES && i < pool.length; i++) {
+      const [r, c] = pool[i];
+      this.cells[r][c].mine = true;
+    }
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      let n = 0;
+      for (const [rr, cc] of this.nb(r, c)) if (this.cells[rr][cc].mine) n++;
+      this.cells[r][c].adj = n;
+    }
+    this.started = true; this.t0 = Date.now();
+  }
+  reveal(r, c) {
+    const cell = this.cells[r][c];
+    if (this.over || cell.op || cell.flag) return false;
+    if (!this.started) this.plant(r, c);
+    if (cell.mine) {
+      this.over = true; this.win = false; cell.op = true; this.boom = [r, c];
+      // 冻结用时（与 checkWin 一致）：否则 elapsedMs() 返回初始值 0，显示 0:00
+      this.elapsed = this.started ? Date.now() - this.t0 : 0;
+      return false;
+    }
+    // 洪水填充
+    const stack = [[r, c]];
+    while (stack.length) {
+      const [rr, cc] = stack.pop();
+      const x = this.cells[rr][cc];
+      if (x.op || x.flag) continue;
+      x.op = true; this.revealed++;
+      if (x.adj === 0) for (const [r2, c2] of this.nb(rr, cc))
+        if (!this.cells[r2][c2].op && !this.cells[r2][c2].flag) stack.push([r2, c2]);
+    }
+    this.checkWin();
+    return true;
+  }
+  toggleFlag(r, c) {
+    const x = this.cells[r][c];
+    if (this.over || x.op) return;
+    x.flag = !x.flag;
+    this.flags += x.flag ? 1 : -1;
+    this.checkWin();
+  }
+  /** 双击已揭开的数字：周围旗数够了就展开其余邻格（和弦） */
+  chord(r, c) {
+    const x = this.cells[r][c];
+    if (this.over || !x.op || x.adj === 0) return false;
+    let f = 0;
+    const hid = [];
+    for (const [rr, cc] of this.nb(r, c)) {
+      const y = this.cells[rr][cc];
+      if (y.flag) f++;
+      else if (!y.op) hid.push([rr, cc]);
+    }
+    if (f !== x.adj || !hid.length) return false;
+    let ok = true;
+    for (const [rr, cc] of hid) if (!this.reveal(rr, cc)) ok = false;
+    return ok;
+  }
+  checkWin() {
+    if (this.over) return;
+    if (this.revealed >= ROWS * COLS - MINES) {
+      this.over = true; this.win = true;
+      // 冻结用时：否则 elapsedMs() 在 over 后仍会返回 elapsed（初始 0），显示 0:00
+      this.elapsed = this.started ? Date.now() - this.t0 : 0;
+    }
+  }
+  safeLeft() { return (ROWS * COLS - MINES) - this.revealed; }
+  elapsedMs() { return this.started ? (this.over ? this.elapsed : Date.now() - this.t0) : 0; }
+}
+
+/* ==========================================================================
+ * 约束求解器
+ *
+ * 每个已揭开的数字 = 一条约束 {cells: 未揭开的邻格, mines: 还需几颗雷}
+ *   规则 1/2  单格推导：mines==0 → 全安全；mines==cells.length → 全是雷
+ *   规则 3    子集推导：若 A.cells ⊂ B.cells，则 B\A 需 (B.mines - A.mines) 颗
+ *   规则 4    完全枚举：对每个连通块穷举所有合法布雷方案 → 得到**精确**概率
+ * ======================================================================== */
+function buildConstraints(b) {
+  const cons = [];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const x = b.cells[r][c];
+    if (!x.op || x.adj === 0) continue;
+    const cells = [];
+    let f = 0;
+    for (const [rr, cc] of b.nb(r, c)) {
+      const y = b.cells[rr][cc];
+      if (y.flag) f++;
+      else if (!y.op) cells.push(rr + ',' + cc);
+    }
+    const need = x.adj - f;
+    if (need < 0) return {error: '旗子插多了'};
+    if (cells.length) cons.push({cells, mines: need, from: [r, c]});
+  }
+  return {cons};
+}
+
+function key2rc(k) { const [r, c] = k.split(',').map(Number); return [r, c]; }
+
+/** 连通块：共享格子的约束归为一组（枚举要按块做，否则组合爆炸） */
+function components(cons) {
+  const groups = [];
+  const used = new Array(cons.length).fill(false);
+  for (let i = 0; i < cons.length; i++) {
+    if (used[i]) continue;
+    const q = [i]; used[i] = true;
+    const idx = [], cellset = new Set();
+    while (q.length) {
+      const k = q.pop(); idx.push(k);
+      for (const cell of cons[k].cells) cellset.add(cell);
+      for (let j = 0; j < cons.length; j++) {
+        if (used[j]) continue;
+        if (cons[j].cells.some(x => cellset.has(x))) { used[j] = true; q.push(j); }
+      }
+    }
+    groups.push({idx, cells: [...cellset]});
+  }
+  return groups;
+}
+
+/** 完全枚举一个连通块 → 每格精确含雷概率 */
+function enumerateGroup(cons, idx, cells, cap) {
+  const cnt = new Map(cells.map(k => [k, 0]));
+  if (cells.length > cap) return {probs: null, solutions: 0};
+  let solutions = 0;
+  const n = cells.length;
+  const pos = new Map(cells.map((k, i) => [k, i]));
+  const sub = idx.map(i => ({bits: cons[i].cells.map(k => pos.get(k)), need: cons[i].mines}));
+  const total = 1 << n;
+  for (let mask = 0; mask < total; mask++) {
+    let ok = true;
+    for (const s of sub) {
+      let m = 0;
+      for (const b of s.bits) if (mask & (1 << b)) m++;
+      if (m !== s.need) { ok = false; break; }
+    }
+    if (!ok) continue;
+    solutions++;
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) cnt.set(cells[i], cnt.get(cells[i]) + 1);
+  }
+  if (!solutions) return {probs: null, solutions: 0};
+  const probs = new Map();
+  for (const k of cells) probs.set(k, cnt.get(k) / solutions);
+  return {probs, solutions};
+}
+
+/**
+ * 求解：返回 {safe, mines, probs, cons, groups, enumCells}
+ *   probs: Map(cellKey → 精确含雷概率)  —— 只有被枚举覆盖到的格子才有
+ */
+function solve(b, depth) {
+  const built = buildConstraints(b);
+  if (built.error) return {error: built.error};
+  let cons = built.cons;
+
+  const safe = new Set(), mines = new Set();
+  const markSafe = k => { if (!safe.has(k)) { safe.add(k); return true; } return false; };
+  const markMine = k => { if (!mines.has(k)) { mines.add(k); return true; } return false; };
+
+  // --- 规则 1/2/3 迭代 depth 轮 ---
+  for (let round = 0; round < Math.max(1, depth); round++) {
+    let changed = false;
+
+    // 先吸收上一轮已确定的结果，再推导
+    cons = cons.map(k => {
+      const cells = k.cells.filter(x => !safe.has(x) && !mines.has(x));
+      const dec = k.cells.filter(x => mines.has(x)).length;
+      return {cells, mines: k.mines - dec, from: k.from};
+    }).filter(k => k.cells.length > 0);
+
+    for (const k of cons) {
+      if (k.mines === 0) { for (const x of k.cells) if (markSafe(x)) changed = true; }
+      else if (k.mines === k.cells.length) { for (const x of k.cells) if (markMine(x)) changed = true; }
+    }
+
+    // 子集推导
+    for (let i = 0; i < cons.length; i++) {
+      const A = cons[i];
+      if (!A.cells.length) continue;
+      for (let j = 0; j < cons.length; j++) {
+        if (i === j) continue;
+        const B = cons[j];
+        const sa = new Set(A.cells);
+        if (B.cells.length <= A.cells.length) continue;
+        if (!A.cells.every(x => B.cells.includes(x))) continue;
+        const rest = B.cells.filter(x => !sa.has(x));
+        const need = B.mines - A.mines;
+        if (need === 0) { for (const x of rest) if (markSafe(x)) changed = true; }
+        else if (need === rest.length) { for (const x of rest) if (markMine(x)) changed = true; }
+      }
+    }
+    if (!changed) break;
+  }
+
+  // --- 规则 4：对剩余约束做完全枚举 ---
+  const rest = cons.map(k => {
+    const cells = k.cells.filter(x => !safe.has(x) && !mines.has(x));
+    const dec = k.cells.filter(x => mines.has(x)).length;
+    return {cells, mines: k.mines - dec, from: k.from};
+  }).filter(k => k.cells.length > 0);
+
+  const probs = new Map();
+  const groups = components(rest);
+  const cap = depth >= 4 ? 20 : (depth >= 3 ? 16 : 12);
+  let enumCells = 0, solutions = 0, tooBig = 0;
+  for (const g of groups) {
+    const r = enumerateGroup(rest, g.idx, g.cells, cap);
+    if (r.probs) {
+      for (const [k, p] of r.probs) probs.set(k, p);
+      enumCells += g.cells.length; solutions += r.solutions;
+    } else {
+      // 连通块超过枚举上限（大棋盘上很常见：多数约束会连成一整块）。
+      // 这时不要整块放弃 —— 改为按约束拆成更小的子块，能算多少算多少。
+      tooBig++;
+      for (const sub of splitGroup(rest, g)) {
+        const rr = enumerateGroup(rest, sub.idx, sub.cells, cap);
+        if (rr.probs) {
+          for (const [k, p] of rr.probs) probs.set(k, p);
+          enumCells += sub.cells.length; solutions += rr.solutions;
+        }
+      }
+    }
+  }
+  for (const k of safe) probs.set(k, 0);
+  for (const k of mines) probs.set(k, 1);
+
+  return {safe, mines, probs, cons: rest, groups, enumCells, solutions, tooBig};
+}
+
+/** 把一个过大的连通块拆成若干小独立块。
+ * 做法：以每个约束为中心做种子扩张，扩张到超过上限就开新块。
+ * 拆出来的子块之间可能有重叠格（那格的概率取先算出来的），
+ * 但每块内部是**精确**的 —— 比整块放弃、什么概率都不给要好得多。 */
+function splitGroup(cons, g, cap) {
+  const out = [];
+  const used = new Set();
+  for (const i of g.idx) {
+    if (used.has(i)) continue;
+    const idx = [], cells = new Set();
+    const q = [i]; used.add(i);
+    while (q.length) {
+      const k = q.pop(); idx.push(k);
+      for (const c of cons[k].cells) cells.add(c);
+      // 只有加上新约束后仍在上限内，才继续吸收邻居
+      const merged = new Set(cells);
+      for (const j of g.idx) {
+        if (used.has(j)) continue;
+        if (!cons[j].cells.some(x => cells.has(x))) continue;
+        for (const x of cons[j].cells) merged.add(x);
+        if (merged.size > cap) break;
+        used.add(j); q.push(j);
+      }
+      if (cells.size >= cap) break;
+    }
+    if (idx.length && cells.size) out.push({idx, cells: [...cells]});
+  }
+  return out;
+}
+
+/* ==========================================================================
+ * 把待判格写成中文描述（给 Laya 看的）
+ * ======================================================================== */
+const DIRNAME = {'-1,-1':'西北','-1,0':'北','-1,1':'东北','0,-1':'西','0,1':'东',
+                 '1,-1':'西南','1,0':'南','1,1':'东南'};
+
+/** 描述某一格周边的约束事实 —— 只陈述事实，不给结论 */
+function describeCell(b, r, c) {
+  const parts = [];
+  for (const [rr, cc] of b.nb(r, c)) {
+    const x = b.cells[rr][cc];
+    if (!x.op || x.adj === 0) continue;
+    let f = 0, hidden = 0;
+    for (const [r2, c2] of b.nb(rr, cc)) {
+      const y = b.cells[r2][c2];
+      if (y.flag) f++;
+      else if (!y.op) hidden++;
+    }
+    if (hidden === 0) continue;
+    const need = x.adj - f;
+    const d = DIRNAME[(rr - r) + ',' + (cc - c)] || '旁边';
+    parts.push(`${d}面是一个已揭开的 ${x.adj}，它周围还有 ${hidden} 个没揭开的格子，其中还需要 ${need} 颗雷`);
+  }
+  if (!parts.length) return '它周围没有可用的已知数字。';
+  return '这一格' + parts.join('；') + '。';
+}
+
+function candidates(b) {
+  // 所有「和已揭开数字相邻」的未揭开格 —— 也就是唯一值得判断的那些格
+  const out = [];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const x = b.cells[r][c];
+    if (x.op || x.flag) continue;
+    if (b.nb(r, c).some(([rr, cc]) => b.cells[rr][cc].op && b.cells[rr][cc].adj > 0)) out.push(r + ',' + c);
+  }
+  return out;
+}
+
+/* ==========================================================================
+ * 调 Laya
+ * ======================================================================== */
+async function askLaya(b, keys) {
+  const state = `扫雷棋盘：${COLS} 列 ${ROWS} 行，一共埋了 ${MINES} 颗雷。`
+    + `目前已经揭开 ${b.revealed} 格、插旗 ${b.flags} 格，游戏还在进行中。`
+    + `下面每个问题问的都是某一格还没揭开的格子下面有没有地雷。`;
+  const questions = {};
+  for (const k of keys) {
+    const [r, c] = key2rc(k);
+    questions['c_' + k] = {
+      type: 'noul',
+      instructions: `第 ${r + 1} 行第 ${c + 1} 列这一格下面有地雷吗？${describeCell(b, r, c)}`,
+      criteria: {true: '这一格下面有地雷', false: '这一格下面没有地雷'}
+    };
+  }
+  const body = JSON.stringify({state, questions, model: MODEL});
+  const t0 = performance.now();
+  const res = await fetch(API, {method: 'POST', headers: {'Content-Type': 'application/json'}, body});
+  const ms = performance.now() - t0;
+  if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text()).slice(0, 160));
+  const data = await res.json();
+  const out = new Map();
+  for (const k of keys) {
+    const a = data.answers && data.answers['c_' + k];
+    if (a) out.set(k, {p: a.noul, conf: a.confidence});
+  }
+  return {probs: out, ms, device: data.device, model: data.routing && data.routing.model};
+}
+
+/* ==========================================================================
+ * 界面
+ * ======================================================================== */
+const board = new Board();
+const el = id => document.getElementById(id);
+let auto = false, busy = false, lastCmp = null;
+let stats = {agree: 0, total: 0, layaTop: 0, layaTopOK: 0};
+/* 耗时埋点：求解与推理分开记，便于判断瓶颈在哪 */
+const perf = {solve: [], infer: []};
+let lastSolveMs = null, lastInferMs = null;
+
+function buildGrid() {
+  const g = el('board');
+  g.style.gridTemplateColumns = `repeat(${COLS}, 25px)`;
+  g.innerHTML = '';
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const d = document.createElement('div');
+    d.className = 'cell hid'; d.dataset.r = r; d.dataset.c = c;
+    d.style.gridRow = r + 1; d.style.gridColumn = c + 1;
+    g.appendChild(d);
+  }
+}
+
+function paint() {
+  const b = board;
+  const hints = (lastCmp && lastCmp.solverSafe) ? new Set(lastCmp.solverSafe) : new Set();
+  const layaCells = (lastCmp && lastCmp.layaTop) ? new Set([lastCmp.layaTop]) : new Set();
+  for (const d of el('board').children) {
+    const r = +d.dataset.r, c = +d.dataset.c, x = b.cells[r][c];
+    const k = r + ',' + c;
+    let cls = 'cell';
+    if (x.op) {
+      cls += ' op';
+      d.textContent = '';
+      if (x.mine) { cls += (b.boom && b.boom[0] === r && b.boom[1] === c) ? ' boom' : ' mine'; d.textContent = '💣'; }
+      else if (x.adj > 0) { cls += ' n' + Math.min(x.adj, 6); d.textContent = x.adj; }
+      else cls += ' blank';
+    } else {
+      cls += ' hid';
+      d.textContent = x.flag ? '⚑' : '';
+      if (x.flag) cls += ' flag';
+    }
+    if (!x.op && hints.has(k)) cls += ' hint';
+    if (!x.op && layaCells.has(k)) cls += ' laya';
+    d.className = cls;
+  }
+  el('sSafe').textContent = Math.max(0, b.safeLeft());
+  el('sMines').textContent = MINES;
+  el('sSteps').textContent = b.steps;
+  const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  const f1 = v => v == null ? '—' : (v < 10 ? v.toFixed(1) : v.toFixed(0)) + ' ms';
+  el('sSolve').textContent = f1(lastSolveMs) + ' / ' + f1(avg(perf.solve));
+  el('sInfer').textContent = f1(lastInferMs) + ' / ' + f1(p50(perf.infer));
+  el('sTime').textContent = fmt(b.elapsedMs());
+}
+
+function p50(a) {
+  if (!a.length) return null;
+  const s = a.slice().sort((x, y) => x - y);
+  return s[Math.floor(s.length / 2)];
+}
+
+function fmt(ms) {
+  const s = Math.floor(ms / 1000);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+function setStatus(html, spin) {
+  el('status').innerHTML = spin ? `<span class="dots">${html}</span>` : html;
+}
+
+/* 这一步没有询问 Laya：不要清空表格，只改表头提示。
+ * 之前这里调 renderCmp({rows:[]}) 会把整张对比表擦掉，导致玩家永远
+ * 看不到 Laya 与数学真值的对比（而那是本页面的核心）。 */
+function markNoLaya(reason) {
+  const tag = el('panelTag');
+  if (tag) tag.textContent = reason;
+  el('panel').classList.add('open');
+}
+
+function renderCmp(cmp) {
+  lastCmp = cmp;
+  const _tag = el('panelTag');
+  if (_tag && cmp && cmp.rows && cmp.rows.length) _tag.textContent = '（点开/收起）';
+  const tb = el('cmpBody');
+  if (!cmp || !cmp.rows.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty">这一步没有可判断的待判格（可能已经解完，或需要纯猜）。</td></tr>';
+    el('cmpNote').textContent = cmp && cmp.note ? cmp.note : '';
+    return;
+  }
+  tb.innerHTML = '';
+  for (const row of cmp.rows) {
+    const [r, c] = key2rc(row.k);
+    const tr = document.createElement('tr');
+    const sp = row.solverP, lp = row.layaP;
+    const diff = (lp == null) ? null : Math.abs(lp - sp);
+    const tag = (lp == null) ? '<span class="badge warn">没答</span>'
+      : diff < 0.15 ? '<span class="badge ok">接近</span>'
+      : diff < 0.4 ? '<span class="badge warn">偏差</span>'
+      : '<span class="badge bad">差很远</span>';
+    tr.innerHTML =
+      `<td>R${r + 1}C${c + 1}</td>` +
+      `<td style="color:var(--dim);font-size:11.5px">${row.desc.slice(0, 64)}…</td>` +
+      `<td class="num">${(100 * sp).toFixed(1)}%</td>` +
+      `<td class="num">${lp == null ? '—' : (100 * lp).toFixed(1) + '%'}</td>` +
+      `<td>${tag}</td>`;
+    tb.appendChild(tr);
+  }
+  let note = `数学真值来自完全枚举（本次共 ${cmp.solutions} 个合法方案，覆盖 ${cmp.enumCells} 格）。`;
+  if (cmp.layaMs) note += ` Laya 一次前向传播 ${cmp.layaMs.toFixed(0)} ms（${cmp.keys} 个问题同批）。`;
+  if (cmp.agreeTop != null) {
+    note += ` 两边选中的「最安全格」${cmp.agreeTop ? '一致' : '不一致'}。`;
+    note += ` 累计一致率 ${stats.total ? (100 * stats.agree / stats.total).toFixed(0) : 0}%`
+         + `（${stats.agree}/${stats.total} 次）；Laya 选的格子里踩雷 ${stats.layaTop - stats.layaTopOK} 次。`;
+  }
+  el('cmpNote').textContent = note;
+}
+
+/* ==========================================================================
+ * 走一步
+ * ======================================================================== */
+async function doStep(useLaya) {
+  if (busy || board.over) return;
+  busy = true;
+  el('btnAuto').disabled = true; el('btnStep').disabled = true;
+  try {
+    const depth = +el('depth').value;
+    const _t0 = performance.now();
+    const sol = solve(board, depth);
+    lastSolveMs = performance.now() - _t0;
+    perf.solve.push(lastSolveMs);
+    if (perf.solve.length > 400) perf.solve.shift();
+
+    // 1) 有确定安全格 → 直接揭（数学给的，不需要问 Laya）
+    if (sol.safe.size) {
+      const list = [...sol.safe];
+      // 优先揭「周围空格多」的，开面更大
+      list.sort((a, c2) => pot(board, c2) - pot(board, a));
+      const [r, c] = key2rc(list[0]);
+      board.reveal(r, c);
+      board.steps++;
+      const extra = list.length > 1 ? `（另有 ${list.length - 1} 格也可确定安全）` : '';
+      setStatus(`约束求解出 <b>${list.length}</b> 个必然安全格 → 揭开 R${r + 1}C${c + 1} ${extra}`);
+      markNoLaya('这一步由约束求解直接确定，没有询问 Laya。上表是最近一次 Laya 与数学真值的对比。');
+      paint(); return;
+    }
+
+    // 2) 只剩确定雷 → 全插旗，然后和弦
+    if (sol.mines.size) {
+      for (const k of sol.mines) { const [r, c] = key2rc(k); if (!board.cells[r][c].flag) board.toggleFlag(r, c); }
+      setStatus(`约束求解出 <b>${sol.mines.size}</b> 个必然是雷 → 已插旗`);
+      paint();
+      // 尝试和弦
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
+        if (board.cells[r][c].op && board.cells[r][c].adj) board.chord(r, c);
+      board.steps++;
+      paint(); return;
+    }
+
+    // 3) 数学定不了 → 需要判断。这才是 Laya 该出场的地方。
+    const cand = candidates(board);
+
+    // 开局第一下：一格都没揭开时没有任何约束可用，必须随机开一格。
+    // 标准扫雷也是这么开的；首次点击后才布雷，所以第一下必然安全。
+    if (!cand.length) {
+      if (!board.started) {
+        const r0 = Math.floor(Math.random() * ROWS), c0 = Math.floor(Math.random() * COLS);
+        board.reveal(r0, c0); board.steps++;
+        setStatus(`开局：先随机揭开 R${r0 + 1}C${c0 + 1} 取信息（首点保证不踩雷）。`);
+        markNoLaya('开局还没有任何已知数字，无从判断，因此没有询问 Laya。');
+        paint(); return;
+      }
+      // 没有与数字相邻的未知格了，剩下的只能纯猜
+      const blind = [];
+      for (let r0 = 0; r0 < ROWS; r0++) for (let c0 = 0; c0 < COLS; c0++) {
+        const x0 = board.cells[r0][c0];
+        if (!x0.op && !x0.flag) blind.push(r0 + ',' + c0);
+      }
+      if (!blind.length) { setStatus('没有可走的格子了。'); return; }
+      const bk = blind[Math.floor(Math.random() * blind.length)];
+      const [br, bc] = key2rc(bk);
+      board.reveal(br, bc); board.steps++;
+      setStatus(`没有可用约束了 → 纯猜 R${br + 1}C${bc + 1}。`);
+      markNoLaya('没有任何已知数字相邻，属于纯猜，没有询问 Laya。');
+      paint(); return;
+    }
+    const keys = cand.slice(0, 14);
+
+    // 数学真值：能枚举到的格用精确概率，其余用「剩余雷数 / 剩余格数」做全局估计
+    const globalP = estimateGlobal(board);
+    const solverP = new Map(keys.map(k => [k, sol.probs.has(k) ? sol.probs.get(k) : globalP]));
+
+    let layaRes = null, err = null;
+    if (useLaya) {
+      setStatus('正在求解数学约束并询问 Laya', true);
+      try {
+        layaRes = await askLaya(board, keys);
+        lastInferMs = layaRes.ms;
+        perf.infer.push(lastInferMs);
+        if (perf.infer.length > 400) perf.infer.shift();
+      }
+      catch (e) { err = e.message; }
+    }
+
+    const rows = keys.map(k => {
+      const [r, c] = key2rc(k);
+      return {k, desc: describeCell(board, r, c), solverP: solverP.get(k),
+              layaP: layaRes && layaRes.probs.has(k) ? layaRes.probs.get(k).p : null};
+    }).sort((a, b) => a.solverP - b.solverP);
+
+    // 各自的「最安全格」
+    const solverBest = rows.reduce((m, x) => x.solverP < m.solverP ? x : m, rows[0]).k;
+    let layaBest = null;
+    if (layaRes && layaRes.probs.size) {
+      layaBest = [...layaRes.probs.entries()].reduce((m, e) => e[1].p < m[1].p ? e : m)[0];
+      stats.total++;
+      if (layaBest === solverBest) stats.agree++;
+    }
+
+    const cmp = {rows, solverSafe: [], layaTop: layaBest, keys: keys.length,
+      solutions: sol.solutions, enumCells: sol.enumCells,
+      layaMs: layaRes && layaRes.ms, agreeTop: layaBest ? (layaBest === solverBest) : null,
+      note: err ? ('Laya 调用失败：' + err + '（只显示数学真值）') : ''};
+    renderCmp(cmp);
+
+    // 决策：以数学为准（Laya 只做参考并记录）
+    const pick = solverBest;
+    const [pr, pc] = key2rc(pick);
+    const before = board.safeLeft();
+    board.reveal(pr, pc);
+    board.steps++;
+    const hitMine = board.over && !board.win;
+    if (layaBest) {
+      stats.layaTop++;
+      if (!(layaBest === pick && hitMine)) stats.layaTopOK++;
+    }
+    paint();
+
+    let msg = `数学定不了 → 猜。最低概率格 <b>R${pr + 1}C${pc + 1}</b>（P(雷) ${(100 * solverP.get(pick)).toFixed(1)}%）`;
+    if (layaBest) {
+      const [lr, lc] = key2rc(layaBest);
+      msg += `；Laya 认为是 R${lr + 1}C${lc + 1}`
+           + (layaBest === pick ? '（<b>一致</b>）' : '（不一致）');
+    }
+    if (err) msg += ` · Laya 出错：${err.slice(0, 80)}`;
+    setStatus(msg + (hitMine ? ' —— 踩雷了。' : ''));
+    void before;
+  } finally {
+    busy = false;
+    el('btnAuto').disabled = false; el('btnStep').disabled = false;
+    if (board.over) stopAuto();
+    paint();
+  }
+}
+
+function pot(b, k) {   // 粗略估计开面大小：周围未揭开格数
+  const [r, c] = key2rc(k);
+  return b.nb(r, c).filter(([rr, cc]) => !b.cells[rr][cc].op).length;
+}
+
+/** 枚举覆盖不到时的兜底估计：全局剩余雷数 / 全局剩余格数 */
+function estimateGlobal(b) {
+  let hidden = 0;
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const x = b.cells[r][c];
+    if (!x.op && !x.flag) hidden++;
+  }
+  const left = MINES - b.flags;
+  return hidden > 0 ? Math.max(0, Math.min(1, left / hidden)) : 0;
+}
+
+/* ==========================================================================
+ * 自动玩
+ * ======================================================================== */
+let timerId = null;
+function startAuto() {
+  auto = true;
+  el('btnAuto').textContent = '暂停';
+  setStatus('自动进行中');
+  tick();
+}
+function stopAuto() {
+  auto = false;
+  el('btnAuto').textContent = '让 Laya 来玩';
+  if (timerId) { clearTimeout(timerId); timerId = null; }
+}
+async function tick() {
+  if (!auto) return;
+  if (board.over) {
+    setStatus(board.win ? '<b>通关了。</b>' : '<b>踩雷了。</b>');
+    stopAuto(); return;
+  }
+  try {
+    await doStep(true);
+  } catch (e) {
+    setStatus('这一步出错:' + String(e && e.message || e).slice(0, 140));
+  }
+  if (!auto) return;
+  // 棋盘越大、已揭开越多就跑得越快；开局给足时间做首次约束求解
+  timerId = setTimeout(tick, board.revealed > 40 ? 110 : (board.revealed > 8 ? 180 : 420));
+}
+
+/* ==========================================================================
+ * 事件绑定
+ * ======================================================================== */
+el('board').addEventListener('click', e => {
+  const d = e.target.closest('.cell'); if (!d || board.over) return;
+  const r = +d.dataset.r, c = +d.dataset.c;
+  if (board.cells[r][c].op) { board.chord(r, c); }
+  else { board.reveal(r, c); board.steps++; }
+  lastCmp = null; renderCmp(null); paint();
+  if (board.over) setStatus(board.win ? '<b>通关了。</b>' : '<b>踩雷了。</b>');
+});
+el('board').addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const d = e.target.closest('.cell'); if (!d || board.over) return;
+  board.toggleFlag(+d.dataset.r, +d.dataset.c);
+  paint();
+});
+el('board').addEventListener('dblclick', e => {
+  const d = e.target.closest('.cell'); if (!d || board.over) return;
+  board.chord(+d.dataset.r, +d.dataset.c); paint();
+});
+el('btnAuto').onclick = () => { if (auto) stopAuto(); else startAuto(); };
+el('btnStep').onclick = () => doStep(true);
+el('btnReset').onclick = () => {
+  stopAuto();
+  board.reset(); lastCmp = null;
+  stats = {agree: 0, total: 0, layaTop: 0, layaTopOK: 0};
+  perf.solve.length = 0; perf.infer.length = 0;
+  lastSolveMs = lastInferMs = null;
+  buildGrid(); renderCmp(null); paint();
+  setStatus('重新开局。点「让 Laya 来玩」或自己点格子。');
+};
+el('panelHd').onclick = () => el('panel').classList.toggle('open');
+
+/* 计时器 */
+setInterval(() => { if (board.started && !board.over) el('sTime').textContent = fmt(board.elapsedMs()); }, 500);
+
+/* 启动 */
+buildGrid(); paint();
+</script>
+</body>
+</html>
