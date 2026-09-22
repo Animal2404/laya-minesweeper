@@ -1,0 +1,21 @@
+远端仓库克隆复核  https://github.com/Animal2404/laya-minesweeper
+==============================================================
+  .gitattributes
+  .gitignore
+  LICENSE
+  README.md
+  run.bat
+  run.sh
+  server.py
+  shot.png
+  static
+  stop.bat
+  stop.sh
+
+  README.md              14582B CRLF=0    loneLF=404  want=LF    OK -
+  static/index.html      56113B CRLF=0    loneLF=1313 want=LF    OK -
+  run.bat                 1739B CRLF=70   loneLF=0    want=CRLF  OK GBK-OK
+  stop.bat                1970B CRLF=52   loneLF=0    want=CRLF  OK GBK-OK
+  stop.sh                 1464B CRLF=0    loneLF=50   want=LF    OK -
+  run.sh                  1032B CRLF=0    loneLF=39   want=LF    OK -
+  server.py               9195B CRLF=0    loneLF=239  want=LF    OK -

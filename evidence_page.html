@@ -15,9 +15,6 @@
     --btn:#222836; --btnHover:#2c3543; --input:#1b2029;
     --cellHover:#333c4d; --mineBg:#4a2622; --boomBg:#7a2f28;
     --shadow:rgba(0,0,0,.4);
-    --solverFlag:#ffb454; --solverBg:rgba(255,180,84,.16);
-    --stepBg:rgba(74,140,255,.30); --stepFg:#eaf1ff; --stepLine:#4a8cff;
-    --stuckFg:#ffb454; --stuckBg:rgba(255,180,84,.12);
   }
   :root[data-theme="light"]{
     --bg:#f2f3f7; --card:#ffffff; --board:#e9ecf2; --line:#d8dce6;
@@ -28,9 +25,6 @@
     --btn:#ffffff; --btnHover:#f7f8fb; --input:#ffffff;
     --cellHover:#d3d9e6; --mineBg:#fbdcd9; --boomBg:#f4a49d;
     --shadow:rgba(20,30,60,.05);
-    --solverFlag:#c77700; --solverBg:rgba(199,119,0,.15);
-    --stepBg:rgba(47,111,237,.22); --stepFg:#12306e; --stepLine:#2f6fed;
-    --stuckFg:#a35a00; --stuckBg:rgba(199,119,0,.12);
   }
   html,body{background:var(--bg);color:var(--fg)}
   body{transition:background .18s ease,color .18s ease}
@@ -86,36 +80,6 @@
   .cell.flag{color:var(--flag);font-size:14px}
   .cell.hint{outline:2px solid var(--blue);outline-offset:-2px}
   .cell.laya{outline:2px dashed #e08a2a;outline-offset:-2px}
-  /* 求解器判定的雷：用不同颜色 + 角标，和玩家手动旗区分 */
-  .cell.solverflag{color:var(--solverFlag);background:var(--solverBg)}
-  .cell.solverflag::after{
-    content:'';position:absolute;top:1px;right:1px;width:3px;height:3px;
-    border-radius:50%;background:var(--solverFlag)}
-  .cell.hid{position:relative}
-
-  /* 接下来第 N 步的预览序号：盖在格子上方居中，不遮数字/旗帜 */
-  .cell .stepno{
-    position:absolute;inset:auto auto 0 0;width:100%;height:100%;
-    display:flex;align-items:center;justify-content:center;
-    font:800 var(--stepfs,11px)/1 ui-monospace,Consolas,monospace;
-    color:var(--stepFg);background:var(--stepBg);border-radius:inherit;
-    pointer-events:none;text-shadow:0 0 3px rgba(0,0,0,.28)}
-  .cell.stepnext .stepno{box-shadow:inset 0 0 0 2px var(--stepLine)}
-
-  /* 状态行 + "无法继续推理"提示 */
-  .statusrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
-  .statusrow .status{margin-top:0;flex:1;min-width:240px}
-  .stuck{display:none;padding:5px 11px;border-radius:20px;font-size:12px;font-weight:700;
-    color:var(--stuckFg);background:var(--stuckBg);border:1px solid var(--stuckFg)}
-  .stuck.on{display:inline-block}
-
-  /* 图例 */
-  .legend .lg{display:inline-flex;align-items:center;gap:4px;margin-right:10px}
-  .legend .sw{display:inline-flex;align-items:center;justify-content:center;
-    width:15px;height:15px;border-radius:3px;font-size:11px;font-style:normal;font-weight:800}
-  .legend .sw-manual{color:var(--flag);background:var(--raised)}
-  .legend .sw-solver{color:var(--solverFlag);background:var(--solverBg)}
-  .legend .sw-step{color:var(--stepFg);background:var(--stepBg)}
   .n1{color:var(--num1)}.n2{color:var(--num2)}.n3{color:var(--num3)}
   .n4{color:var(--num4)}.n5{color:var(--num5)}.n6{color:var(--num6)}
 
@@ -158,14 +122,7 @@
       <div class="sub">读懂已知数字，推演下一步。代码负责数学约束，Laya 负责判断。</div>
     </div>
     <div class="ctrls">
-      <div class="selwrap">
-        <label for="theme">主题</label>
-        <select id="theme">
-          <option value="dark">深色</option>
-          <option value="light">浅色</option>
-          <option value="system">跟随系统</option>
-        </select>
-      </div>
+      <button id="btnTheme" title="切换深色 / 浅色">🌙 深色</button>
       <button id="btnAuto" class="primary">让 Laya 来玩</button>
       <button id="btnStep">预测一步</button>
       <button id="btnReset">重新开局</button>
@@ -194,12 +151,7 @@
     <div class="st"><span class="k">本局用时</span><span class="v" id="sTime">0:00</span></div>
     <div class="st"><span class="k">约束求解 本步/均值</span><span class="v" id="sSolve">— / —</span></div>
     <div class="st"><span class="k">Laya 本步/p50</span><span class="v" id="sInfer">— / —</span></div>
-    <div class="legend">
-      <span class="lg"><i class="sw sw-manual">⚑</i> 手动旗</span>
-      <span class="lg"><i class="sw sw-solver">⚑</i> 求解器判定为雷</span>
-      <span class="lg"><i class="sw sw-step">1</i> 接下来第 N 步</span>
-      点击揭开 · 右键插旗 · 数字格双击和弦
-    </div>
+    <div class="legend">点击揭开 · 右键插旗<br>数字格上双击可和弦展开</div>
   </div>
 
   <div class="custombar" id="custombar">
@@ -213,10 +165,7 @@
 
   <div class="boardwrap"><div class="board" id="board"></div></div>
 
-  <div class="statusrow">
-    <div class="status" id="status">准备好了。点「让 Laya 来玩」或自己点格子。</div>
-    <div class="stuck" id="stuck"></div>
-  </div>
+  <div class="status" id="status">准备好了。点「让 Laya 来玩」或自己点格子。</div>
 
   <div class="panel open" id="panel">
     <h2 id="panelHd">Laya 的判断 vs 数学真值 <span class="tag" id="panelTag">（点开/收起）</span></h2>
@@ -318,11 +267,7 @@ class Board {
     for (const [dr, dc] of NB) if (this.inside(r+dr, c+dc)) out.push([r+dr, c+dc]);
     return out;
   }
-  /** 首次点击后再布雷。
-   *  保证：首点本身 + 周围 8 格都无雷 —— 也就是首点的 adj 一定为 0，
-   *  从而触发洪水填充、一次开出大片空白。
-   *  这一条很关键：若只保证"首点无雷"，周围有雷时 adj≠0 就不会展开，
-   *  开局后一个约束都没有，求解器只能盲猜（实测首步就 17% 概率踩雷）。 */
+  /** 首次点击后再布雷，保证第一下不踩雷 */
   plant(sr, sc) {
     const safe = new Set([sr + ',' + sc]);
     for (const [r, c] of this.nb(sr, sc)) safe.add(r + ',' + c);
@@ -672,18 +617,6 @@ function solve(b, depth) {
       // 把全局证明出的"必然"提升为确定结论，否则会白白去猜
       for (const k of gi.certainSafe) markSafe(k);
       for (const k of gi.certainMine) markMine(k);
-
-      // 未被任何约束覆盖的自由格：用全局 DP 推出的概率填上。
-      // 不做这一步，高密度盘面上绝大多数格子就没有精确概率，
-      // 猜测只能退回粗略的密度估计（实测地狱难度覆盖率仅 1.3%）。
-      if (Number.isFinite(gi.freeP)) {
-        for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-          const x = b.cells[r][c];
-          if (x.op || x.flag) continue;
-          const k = r + ',' + c;
-          if (!probs.has(k)) probs.set(k, gi.freeP);
-        }
-      }
     }
   }
 
@@ -804,91 +737,16 @@ function combineGlobally(solved, totalHidden, minesLeft) {
     }
   }
 
-  // ==========================================================================
-  // 自由格概率 —— 这是原先缺失、却对"高密度盘面"最关键的一步。
-  //
-  // freeCells 是"未被任何约束覆盖"的格子。旧实现只把它用于 DP 归一化，
-  // 从不给它赋概率，于是这些格子在 UI 上拿不到精确值、只能退回密度估计。
-  // 实测地狱难度枚举覆盖率仅 1.3%，猜测几乎全靠估计 —— 这是通过率上不去的主因。
-  //
-  // 正确做法：自由格的含雷概率同样由全局 DP 决定。
-  //   P(某自由格是雷) = E[自由格分配的雷数] / freeCells
-  // 其中每个组合的权重是「其余块取 s 颗雷」×「从 freeCells 里选 (minesLeft-s) 个」。
-  // ==========================================================================
-  let freeP = null;
-  if (freeCells > 0) {
-    // 全部块合起来的分布
-    let allDist = new Float64Array(maxM + 1); allDist[0] = 1;
-    for (const bl of solved) allDist = conv(allDist, bl.hist);
-
-    // 在对数域加权：C(1191,520) 直接算会溢出成 Infinity，
-    // 再乘 0 得到 NaN —— 这正是自由格概率长期算不出来的原因。
-    // 用 log 域做 logsumexp，最后再取比值，数值稳定。
-    const terms = [];
-    let maxLog = -Infinity;
-    for (let j = 0; j <= maxM; j++) {
-      if (!allDist[j]) continue;
-      const needFree = minesLeft - j;
-      if (needFree < 0 || needFree > freeCells) continue;
-      const lg = Math.log(allDist[j]) + logBinomSafe(freeCells, needFree);
-      if (!Number.isFinite(lg)) continue;
-      terms.push({lg, needFree});
-      if (lg > maxLog) maxLog = lg;
-    }
-    if (terms.length && Number.isFinite(maxLog)) {
-      let wsum = 0, wmine = 0;
-      for (const t of terms) {
-        const w = Math.exp(t.lg - maxLog);      // 归一化后不会溢出
-        wsum += w; wmine += w * t.needFree;
-      }
-      if (wsum > 0) freeP = wmine / (wsum * freeCells);
-    }
-  }
-
-  return probs.size || freeP !== null
-    ? {probs, weight: Z, certainSafe, certainMine, freeCells, freeP}
-    : null;
+  return probs.size ? {probs, weight: Z, certainSafe, certainMine} : null;
 }
 
-/** 二项式系数 C(n,k)。
- *  用乘法而非阶乘，但 C(1191,520) 仍会溢出成 Infinity —— 而 Infinity 参与
- *  DP 加权会得到 NaN（Infinity * 0 = NaN），进而让自由格概率算不出来。
- *  实测这正是地狱难度"格子没有精确概率"的根因，与推理深度无关。 */
+/** 二项式系数 C(n,k)，用乘法避免阶乘溢出 */
 function binom(n, k) {
   if (k < 0 || k > n) return 0;
   k = Math.min(k, n - k);
-  if (k === 0) return 1;
-  // 超过这个规模就改用对数域，避免溢出
-  if (n > 200) return Math.exp(logBinom(n, k));
   let r = 1;
   for (let i = 1; i <= k; i++) r = r * (n - k + i) / i;
   return r;
-}
-
-/** ln C(n,k)，用 lgamma 的 Lanczos 近似，n 很大也不溢出 */
-function logBinom(n, k) {
-  return lgamma(n + 1) - lgamma(k + 1) - lgamma(n - k + 1);
-}
-function lgamma(x) {
-  // Lanczos 近似，误差 ~1e-10，对本用途足够
-  const g = 7;
-  const C = [0.99999999999980993, 676.5203681218851, -1259.1392167224028,
-             771.32342877765313, -176.61502916214059, 12.507343278686905,
-             -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
-  if (x < 0.5) {
-    return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
-  }
-  x -= 1;
-  let a = C[0];
-  const t = x + g + 0.5;
-  for (let i = 1; i < g + 2; i++) a += C[i] / (x + i);
-  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
-}
-
-/** ln C(n,k)，供 DP 在对数域加权用 */
-function logBinomSafe(n, k) {
-  if (k < 0 || k > n) return -Infinity;
-  return logBinom(n, k);
 }
 
 /** 把一个过大的连通块拆成若干小独立块（枚举不了时的降级路径） */
@@ -1057,7 +915,6 @@ function applyBoard(cols, rows, mines) {
   stats = {agree: 0, total: 0, layaTop: 0, layaTopOK: 0};
   perf.solve.length = 0; perf.infer.length = 0;
   lastSolveMs = lastInferMs = null;
-  solverFlags.clear(); clearPreview();
   buildGrid(); renderCmp(null); paint();
   setStatus(`新棋盘：${COLS}×${ROWS} = <b>${COLS*ROWS}</b> 格，${MINES} 颗雷（密度 ${(density()*100).toFixed(1)}%）。点「让 Laya 来玩」或自己点格子。`);
   syncLevelSelect();
@@ -1065,43 +922,26 @@ function applyBoard(cols, rows, mines) {
 
 function paint() {
   const b = board;
-  // 预览序号只画"接下来要执行"的走法；对局结束或卡住时 preview 为空
-  const stepNo = new Map();
-  const nextKey = (preview.length && !b.over) ? preview[0].key : null;
-  if (!b.over) preview.forEach((m, i) => { if (m.kind === 'reveal') stepNo.set(m.key, i + 1); });
-
+  const hints = (lastCmp && lastCmp.solverSafe) ? new Set(lastCmp.solverSafe) : new Set();
+  const layaCells = (lastCmp && lastCmp.layaTop) ? new Set([lastCmp.layaTop]) : new Set();
   for (const d of el('board').children) {
     const r = +d.dataset.r, c = +d.dataset.c, x = b.cells[r][c];
     const k = r + ',' + c;
     let cls = 'cell';
-    let content = '';
     if (x.op) {
       cls += ' op';
-      if (x.mine) {
-        cls += (b.boom && b.boom[0] === r && b.boom[1] === c) ? ' boom' : ' mine';
-        content = '💣';
-      } else if (x.adj > 0) {
-        cls += ' n' + Math.min(x.adj, 6);
-        content = String(x.adj);
-      } else cls += ' blank';
+      d.textContent = '';
+      if (x.mine) { cls += (b.boom && b.boom[0] === r && b.boom[1] === c) ? ' boom' : ' mine'; d.textContent = '💣'; }
+      else if (x.adj > 0) { cls += ' n' + Math.min(x.adj, 6); d.textContent = x.adj; }
+      else cls += ' blank';
     } else {
       cls += ' hid';
-      if (x.flag) {
-        content = '⚑';
-        // 求解器插的旗用独立样式，和玩家手动旗区分
-        cls += solverFlags.has(k) ? ' flag solverflag' : ' flag';
-      }
+      d.textContent = x.flag ? '⚑' : '';
+      if (x.flag) cls += ' flag';
     }
-    // 预览序号：盖在整格上并居中，不改变格子尺寸，因此不会遮住数字或旗子
-    if (stepNo.has(k)) cls += (k === nextKey) ? ' stepnext' : '';
+    if (!x.op && hints.has(k)) cls += ' hint';
+    if (!x.op && layaCells.has(k)) cls += ' laya';
     d.className = cls;
-    d.textContent = content;
-    if (stepNo.has(k)) {
-      const sp = document.createElement('span');
-      sp.className = 'stepno';
-      sp.textContent = stepNo.get(k);
-      d.appendChild(sp);
-    }
   }
   el('sSize').textContent = COLS + '×' + ROWS + ' = ' + (COLS*ROWS);
   el('sLevel').textContent = (density()*100).toFixed(1) + '%';
@@ -1178,184 +1018,6 @@ function renderCmp(cmp) {
 }
 
 /* ==========================================================================
- * 走法规划 —— 预览与执行的**唯一来源**
- *
- * 设计要点：预览显示的走法和真正执行的走法必须一致。做法不是"两边各自算一遍
- * 再对齐"，而是只算一次：planMoves() 产生一个走法列表，UI 拿它画序号，
- * 执行器拿它走子。这样"预览 ≠ 执行"在结构上就不可能发生。
- * ======================================================================== */
-
-/** 棋盘状态的轻量快照，用于在不改动真实棋盘的前提下推演后续几步 */
-function snapshot(b) {
-  return {
-    hidden: new Set([...hiddenCells(b)].filter(k => !flagOf(b, k))),
-    flags: new Set([...allFlagged(b)]),
-    adj: (() => {                       // 已揭开格的数字，供描述约束用
-      const m = new Map();
-      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-        const x = b.cells[r][c];
-        if (x.op) m.set(r + ',' + c, x.adj);
-      }
-      return m;
-    })(),
-    revealed: b.revealed
-  };
-}
-
-function hiddenCells(b) {
-  const out = [];
-  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-    const x = b.cells[r][c];
-    if (!x.op) out.push(r + ',' + c);
-  }
-  return out;
-}
-function allFlagged(b) {
-  const out = [];
-  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-    if (b.cells[r][c].flag && !b.cells[r][c].op) out.push(r + ',' + c);
-  }
-  return out;
-}
-function flagOf(b, k) { const [r, c] = key2rc(k); return b.cells[r][c].flag; }
-
-/**
- * 规划接下来的走法。
- *
- * 返回 {
- *   moves: [{kind:'flag'|'reveal', key, certain:bool, p, reason}],
- *   stuck: bool,          // 无法继续推理（无必然格且无可用概率）
- *   sol                   // 本次求解结果，供 UI 复用
- * }
- *
- * 走法顺序即执行顺序：
- *   1. 先标记所有"必然是雷"的格子（certain=true）
- *   2. 若有"必然安全"格 → 依次揭开（certain=true）
- *   3. 否则选概率最低的格猜测（certain=false，UI 必须标注为猜测）
- *
- * 注意：只在真正无法推理时才猜，且猜测不伪装成结论。
- */
-function planMoves(b, depth, maxMoves) {
-  const limit = maxMoves || 4;
-  const out = {moves: [], stuck: false, sol: null, guessed: false, flags: []};
-  if (b.over) return out;
-
-  // 未开局：没有约束，走法就是"随机开一格"（首点保证不踩雷）。
-  // Board.reveal → plant() 会保证首点 3x3 无雷，并对 0 区域做洪水填充，
-  // 因此这一步之后通常就有大量已揭开格可推理。
-  if (!b.started) {
-    // 首点避开最外圈：这样 3x3 邻域完整，plant() 保证其全空 → 必然 flood fill，
-    // 开局即可获得大量约束，而不是只揭开孤零零一格然后被迫盲猜。
-    const r = 1 + Math.floor(Math.random() * Math.max(1, ROWS - 2));
-    const c = 1 + Math.floor(Math.random() * Math.max(1, COLS - 2));
-    out.moves.push({kind: 'reveal', key: r + ',' + c, certain: false, p: null, reason: '开局取信息'});
-    return out;
-  }
-
-  // 在**克隆盘**上推演，绝不动真实棋盘
-  const sim = cloneBoard(b);
-  const ROUNDS = limit + 6;
-
-  for (let round = 0; round < ROUNDS; round++) {
-    if (sim.over) break;
-    const sol = solve(sim, depth);
-    // solve 可能返回 {error} —— 不能让整个预览崩掉
-    if (!sol || !sol.mines || !sol.safe) { out.error = (sol && sol.error) || '求解失败'; break; }
-    if (round === 0) out.sol = sol;
-
-    // 必然是雷：记录为"自动标记"（不占预览序号），并在克隆盘上插旗，
-    // 这样后续轮次的推理能利用它们。
-    let flagged = 0;
-    for (const k of sol.mines) {
-      const [r, c] = key2rc(k);
-      if (!sim.cells[r][c].flag && !sim.cells[r][c].op) {
-        sim.toggleFlag(r, c);
-        if (!solverFlags.has(k)) out.flags.push(k);
-        flagged++;
-      }
-    }
-
-    // 必然是安全：无论本轮是否插了旗，都要继续产出走法。
-    // 早先写成"插旗就 continue 重来"，结果插旗与揭开交替触发、
-    // 轮数在产出任何 move 之前就耗尽 —— 表现为"solve 明明给出 safe=1，
-    // 预览却是 0 步、报无法继续推理"（实测地狱难度第 9 步）。
-    if (sol.safe.size) {
-      const list = [...sol.safe].filter(k => {
-        const [r, c] = key2rc(k);
-        return !sim.cells[r][c].op && !sim.cells[r][c].flag;
-      });
-      if (list.length) {
-        list.sort((x, y) => pot(sim, y) - pot(sim, x));
-        const k = list[0];
-        out.moves.push({kind: 'reveal', key: k, certain: true, p: 0, reason: '约束推导为必然安全'});
-        const [r, c] = key2rc(k);
-        sim.reveal(r, c);
-        if (out.moves.length >= limit) break;
-        continue;
-      }
-    }
-
-    if (flagged) continue;      // 只插了旗、没有安全格 → 下一轮重新求解
-
-    // 推不出来 → 猜。候选是**全部**未知格，不只数字旁边
-    const all = [];
-    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-      const x = sim.cells[r][c];
-      if (x.op || x.flag) continue;
-      const k = r + ',' + c;
-      const v = sol.probs.get(k);
-      all.push({k, p: Number.isFinite(v) ? v : null});
-    }
-    if (!all.length) { out.stuck = true; break; }
-
-    const gp = estimateGlobal(sim);
-    for (const x of all) if (x.p === null) x.p = gp;
-    all.sort((x, y) => (x.p - y.p) || (pot(sim, y.k) - pot(sim, x.k)));
-    const best = all[0];
-    out.moves.push({kind: 'reveal', key: best.k, certain: false, p: best.p,
-                    reason: `无法唯一确定，选全局最低概率（${(100 * best.p).toFixed(1)}%）`});
-    out.guessed = true;
-    break;   // 猜测之后局面未知，不再继续推演后续序号
-  }
-
-  if (!out.moves.length && !out.error) out.stuck = true;
-  return out;
-}
-
-/** 克隆棋盘 —— 供预览在不动真实盘面的前提下推演 */
-function cloneBoard(b) {
-  const c = new Board();
-  c.cells = b.cells.map(row => row.map(x => ({mine: x.mine, op: x.op, flag: x.flag, adj: x.adj})));
-  c.started = b.started; c.over = b.over; c.win = b.win;
-  c.revealed = b.revealed; c.flags = b.flags; c.steps = b.steps;
-  c.t0 = b.t0; c.elapsed = b.elapsed;
-  return c;
-}
-
-/**
- * 执行一个走法。返回 {ok, hitMine}。
- * 这是**唯一**改动棋盘的入口，预览与自动模式都经由它。
- */
-function applyMove(b, mv) {
-  const [r, c] = key2rc(mv.key);
-  if (mv.kind === 'flag') {
-    if (!b.cells[r][c].flag && !b.cells[r][c].op) { b.toggleFlag(r, c); return {ok: true, hitMine: false}; }
-    return {ok: false, hitMine: false};
-  }
-  // reveal
-  const wasOver = b.over;
-  const ok = b.reveal(r, c);
-  const hitMine = !wasOver && b.over && !b.win;
-  return {ok: ok !== false, hitMine};
-}
-
-/** 求解器自动插的旗（用于区分手动旗与算法旗） */
-const solverFlags = new Set();
-/** 当前预览的走法（下一个要执行的走法在 moves[0]） */
-let preview = [];
-let stuckNow = false;
-
-/* ==========================================================================
  * 走一步
  * ======================================================================== */
 async function doStep(useLaya) {
@@ -1364,102 +1026,94 @@ async function doStep(useLaya) {
   el('btnAuto').disabled = true; el('btnStep').disabled = true;
   try {
     const depth = +el('depth').value;
-
-    // ---- 未开局：先开一格取信息（首点保证不踩雷）----
-    if (!board.started) {
-      const pl = planMoves(board, depth, 1);
-      const mv = pl.moves[0];
-      if (!mv) return;
-      applyMove(board, mv);
-      board.steps++;
-      setStatus(`开局：揭开 <b>R${key2rc(mv.key)[0] + 1}C${key2rc(mv.key)[1] + 1}</b> 取信息（首点保证不踩雷）。`);
-      markNoLaya('开局还没有任何已知数字，无从判断，因此没有询问 Laya。');
-      refreshPreview();
-      return;
-    }
-
-    // ---- 规划：预览与执行共用同一次规划结果 ----
-    const t0 = performance.now();
-    const pl = planMoves(board, depth, 4);
-    lastSolveMs = performance.now() - t0;
+    const _t0 = performance.now();
+    const sol = solve(board, depth);
+    lastSolveMs = performance.now() - _t0;
     perf.solve.push(lastSolveMs);
     if (perf.solve.length > 400) perf.solve.shift();
 
-    const sol = pl.sol;
-    const mv = pl.moves[0];
-    if (!mv) {
-      stuckNow = true;
-      setStatus('无法继续推理：没有可走的格子了。');
-      refreshPreview();
-      return;
-    }
-    stuckNow = false;
-
-    // ---- 必然是雷 → 只插旗，让玩家看到过程；本步不算揭格 ----
-    if (mv.kind === 'flag') {
-      const marks = pl.moves.filter(m => m.kind === 'flag').map(m => m.key);
-      for (const k of marks) { if (applyMove(board, {kind: 'flag', key: k}).ok) solverFlags.add(k); }
-      setStatus(`约束推导出 <b>${marks.length}</b> 个必然是雷 → 已自动插旗`
-                + (sol && sol.safe.size ? `，同时还有 ${sol.safe.size} 个必然安全格待揭。` : '。'));
-      markNoLaya('这一步由约束求解直接确定，没有询问 Laya。上表是最近一次 Laya 与数学真值的对比。');
-      refreshPreview();
-      paint();
-      return;
-    }
-
-    // ---- 揭开一格 ----
-    const [pr, pc] = key2rc(mv.key);
-
-    if (mv.certain) {
-      // 必然安全：直接揭，不需要问 Laya
-      applyMove(board, mv);
+    // 1) 有确定安全格 → 直接揭（数学给的，不需要问 Laya）
+    if (sol.safe.size) {
+      const list = [...sol.safe];
+      // 优先揭「周围空格多」的，开面更大
+      list.sort((a, c2) => pot(board, c2) - pot(board, a));
+      const [r, c] = key2rc(list[0]);
+      board.reveal(r, c);
       board.steps++;
-      const n = pl.moves.filter(x => x.kind === 'reveal' && x.certain).length;
-      const extra = n > 1 ? `（另有 ${n - 1} 格也可确定安全）` : '';
-      setStatus(`约束求解出 <b>${n}</b> 个必然安全格 → 揭开 R${pr + 1}C${pc + 1} ${extra}`);
+      const extra = list.length > 1 ? `（另有 ${list.length - 1} 格也可确定安全）` : '';
+      setStatus(`约束求解出 <b>${list.length}</b> 个必然安全格 → 揭开 R${r + 1}C${c + 1} ${extra}`);
       markNoLaya('这一步由约束求解直接确定，没有询问 Laya。上表是最近一次 Laya 与数学真值的对比。');
-      refreshPreview();
-      paint();
-      return;
+      paint(); return;
     }
 
-    // ---- 必须猜：如实标注，并把 Laya 的对比一并展示 ----
-    const globalP = estimateGlobal(board);
-    const keys = [];
-    for (let r = 0; r < ROWS && keys.length < 14; r++)
-      for (let c = 0; c < COLS && keys.length < 14; c++) {
-        const x = board.cells[r][c];
-        if (!x.op && !x.flag) {
-          const k = r + ',' + c;
-          if (hintWorthy(board, r, c)) keys.push(k);
-        }
-      }
-    const useKeys = keys.length ? keys : [mv.key];
+    // 2) 只剩确定雷 → 全插旗，然后和弦
+    if (sol.mines.size) {
+      for (const k of sol.mines) { const [r, c] = key2rc(k); if (!board.cells[r][c].flag) board.toggleFlag(r, c); }
+      setStatus(`约束求解出 <b>${sol.mines.size}</b> 个必然是雷 → 已插旗`);
+      paint();
+      // 尝试和弦
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
+        if (board.cells[r][c].op && board.cells[r][c].adj) board.chord(r, c);
+      board.steps++;
+      paint(); return;
+    }
 
-    const solverP = new Map(useKeys.map(k => {
-      const v = sol ? sol.probs.get(k) : undefined;
+    // 3) 数学定不了 → 需要判断。这才是 Laya 该出场的地方。
+    const cand = candidates(board);
+
+    // 开局第一下：一格都没揭开时没有任何约束可用，必须随机开一格。
+    // 标准扫雷也是这么开的；首次点击后才布雷，所以第一下必然安全。
+    if (!cand.length) {
+      if (!board.started) {
+        const r0 = Math.floor(Math.random() * ROWS), c0 = Math.floor(Math.random() * COLS);
+        board.reveal(r0, c0); board.steps++;
+        setStatus(`开局：先随机揭开 R${r0 + 1}C${c0 + 1} 取信息（首点保证不踩雷）。`);
+        markNoLaya('开局还没有任何已知数字，无从判断，因此没有询问 Laya。');
+        paint(); return;
+      }
+      // 没有与数字相邻的未知格了，剩下的只能纯猜
+      const blind = [];
+      for (let r0 = 0; r0 < ROWS; r0++) for (let c0 = 0; c0 < COLS; c0++) {
+        const x0 = board.cells[r0][c0];
+        if (!x0.op && !x0.flag) blind.push(r0 + ',' + c0);
+      }
+      if (!blind.length) { setStatus('没有可走的格子了。'); return; }
+      const bk = blind[Math.floor(Math.random() * blind.length)];
+      const [br, bc] = key2rc(bk);
+      board.reveal(br, bc); board.steps++;
+      setStatus(`没有可用约束了 → 纯猜 R${br + 1}C${bc + 1}。`);
+      markNoLaya('没有任何已知数字相邻，属于纯猜，没有询问 Laya。');
+      paint(); return;
+    }
+    const keys = cand.slice(0, 14);
+
+    // 数学真值：能枚举到的格用精确概率，其余用「剩余雷数 / 剩余格数」做全局估计
+    const globalP = estimateGlobal(board);
+    const solverP = new Map(keys.map(k => {
+      const v = sol.probs.get(k);
       return [k, Number.isFinite(v) ? v : globalP];
     }));
-    solverP.set(mv.key, mv.p);
 
     let layaRes = null, err = null;
     if (useLaya) {
       setStatus('正在求解数学约束并询问 Laya', true);
       try {
-        layaRes = await askLaya(board, useKeys);
+        layaRes = await askLaya(board, keys);
         lastInferMs = layaRes.ms;
         perf.infer.push(lastInferMs);
         if (perf.infer.length > 400) perf.infer.shift();
-      } catch (e) { err = e.message; }
+      }
+      catch (e) { err = e.message; }
     }
 
-    const rowsCmp = useKeys.map(k => {
+    const rows = keys.map(k => {
       const [r, c] = key2rc(k);
       return {k, desc: describeCell(board, r, c), solverP: solverP.get(k),
               layaP: layaRes && layaRes.probs.has(k) ? layaRes.probs.get(k).p : null};
-    }).sort((x, y) => x.solverP - y.solverP);
+    }).sort((a, b) => a.solverP - b.solverP);
 
-    const solverBest = mv.key;
+    // 各自的「最安全格」
+    const solverBest = rows.reduce((m, x) => x.solverP < m.solverP ? x : m, rows[0]).k;
     let layaBest = null;
     if (layaRes && layaRes.probs.size) {
       layaBest = [...layaRes.probs.entries()].reduce((m, e) => e[1].p < m[1].p ? e : m)[0];
@@ -1467,65 +1121,42 @@ async function doStep(useLaya) {
       if (layaBest === solverBest) stats.agree++;
     }
 
-    renderCmp({rows: rowsCmp, solverSafe: [], layaTop: layaBest, keys: useKeys.length,
-      solutions: sol ? sol.solutions : 0, enumCells: sol ? sol.enumCells : 0,
+    const cmp = {rows, solverSafe: [], layaTop: layaBest, keys: keys.length,
+      solutions: sol.solutions, enumCells: sol.enumCells,
       layaMs: layaRes && layaRes.ms, agreeTop: layaBest ? (layaBest === solverBest) : null,
-      note: err ? ('Laya 调用失败：' + err + '（只显示数学真值）') : ''});
+      note: err ? ('Laya 调用失败：' + err + '（只显示数学真值）') : ''};
+    renderCmp(cmp);
 
-    const hit = applyMove(board, mv);
+    // 决策：以数学为准（Laya 只做参考并记录）
+    const pick = solverBest;
+    const [pr, pc] = key2rc(pick);
+    const before = board.safeLeft();
+    board.reveal(pr, pc);
     board.steps++;
+    const hitMine = board.over && !board.win;
     if (layaBest) {
       stats.layaTop++;
-      if (!(layaBest === solverBest && hit.hitMine)) stats.layaTopOK++;
+      if (!(layaBest === pick && hitMine)) stats.layaTopOK++;
     }
+    paint();
 
-    const pickTxt = Number.isFinite(mv.p) ? (100 * mv.p).toFixed(1) + '%' : '未知';
-    let msg = `无法唯一确定 → <b>猜测</b> 全局最低概率格 R${pr + 1}C${pc + 1}（P(雷) ${pickTxt}）`;
+    const pickP = solverP.get(pick);
+    const pickTxt = Number.isFinite(pickP) ? (100 * pickP).toFixed(1) + '%' : '未知';
+    let msg = `数学定不了 → 猜。最低概率格 <b>R${pr + 1}C${pc + 1}</b>（P(雷) ${pickTxt}）`;
     if (layaBest) {
       const [lr, lc] = key2rc(layaBest);
-      msg += `；Laya 认为是 R${lr + 1}C${lc + 1}` + (layaBest === solverBest ? '（一致）' : '（不一致）');
+      msg += `；Laya 认为是 R${lr + 1}C${lc + 1}`
+           + (layaBest === pick ? '（<b>一致</b>）' : '（不一致）');
     }
     if (err) msg += ` · Laya 出错：${err.slice(0, 80)}`;
-    setStatus(msg + (hit.hitMine ? ' —— 踩雷了。' : ''));
-    refreshPreview();
-    paint();
-  } catch (e) {
-    // 求解器抛错：不白屏、不卡死，保留棋盘并明确报错
-    setStatus('求解出错：' + String(e && e.message || e).slice(0, 160) + '（棋盘已保留，可重开一局）');
-    document.getElementById('stuck').textContent = '求解出错';
-    document.getElementById('stuck').classList.add('on');
+    setStatus(msg + (hitMine ? ' —— 踩雷了。' : ''));
+    void before;
   } finally {
     busy = false;
     el('btnAuto').disabled = false; el('btnStep').disabled = false;
-    if (board.over) { stopAuto(); clearPreview(); }
+    if (board.over) stopAuto();
     paint();
   }
-}
-
-/** 是否值得把这一格列入"待判"（与已知数字相邻） */
-function hintWorthy(b, r, c) {
-  return b.nb(r, c).some(([rr, cc]) => b.cells[rr][cc].op && b.cells[rr][cc].adj > 0);
-}
-
-/** 重新计算并刷新 4 步预览 */
-function refreshPreview() {
-  if (board.over) { clearPreview(); return; }
-  if (!board.started) { clearPreview(); return; }
-  let pl;
-  try { pl = planMoves(board, +el('depth').value, 4); }
-  catch (e) { clearPreview(); return; }
-  preview = pl.moves || [];
-  stuckNow = preview.length === 0;
-  const so = document.getElementById('stuck');
-  if (stuckNow) { so.textContent = '无法继续推理'; so.classList.add('on'); }
-  else so.classList.remove('on');
-}
-
-function clearPreview() {
-  preview = [];
-  stuckNow = false;
-  const so = document.getElementById('stuck');
-  if (so) so.classList.remove('on');
 }
 
 function pot(b, k) {   // 粗略估计开面大小：周围未揭开格数
@@ -1562,9 +1193,8 @@ function stopAuto() {
 async function tick() {
   if (!auto) return;
   if (board.over) {
-    clearPreview(); solverFlags.clear();
     setStatus(board.win ? '<b>通关了。</b>' : '<b>踩雷了。</b>');
-    stopAuto(); paint(); return;
+    stopAuto(); return;
   }
   try {
     await doStep(true);
@@ -1584,27 +1214,18 @@ el('board').addEventListener('click', e => {
   const r = +d.dataset.r, c = +d.dataset.c;
   if (board.cells[r][c].op) { board.chord(r, c); }
   else { board.reveal(r, c); board.steps++; }
-  lastCmp = null; renderCmp(null);
-  if (board.over) { clearPreview(); setStatus(board.win ? '<b>通关了。</b>' : '<b>踩雷了。</b>'); }
-  else refreshPreview();
-  paint();
+  lastCmp = null; renderCmp(null); paint();
+  if (board.over) setStatus(board.win ? '<b>通关了。</b>' : '<b>踩雷了。</b>');
 });
 el('board').addEventListener('contextmenu', e => {
   e.preventDefault();
   const d = e.target.closest('.cell'); if (!d || board.over) return;
-  const r = +d.dataset.r, c = +d.dataset.c, k = r + ',' + c;
-  // 玩家手动操作优先：这一格从此归玩家，求解器不再把它当自己的标记
-  solverFlags.delete(k);
-  board.toggleFlag(r, c);
-  // 玩家的旗子是"已知条件"，会影响推理 → 立即重算预览
-  refreshPreview();
+  board.toggleFlag(+d.dataset.r, +d.dataset.c);
   paint();
 });
 el('board').addEventListener('dblclick', e => {
   const d = e.target.closest('.cell'); if (!d || board.over) return;
-  board.chord(+d.dataset.r, +d.dataset.c);
-  if (board.over) clearPreview(); else refreshPreview();
-  paint();
+  board.chord(+d.dataset.r, +d.dataset.c); paint();
 });
 el('btnAuto').onclick = () => { if (auto) stopAuto(); else startAuto(); };
 el('btnStep').onclick = () => doStep(true);
@@ -1654,56 +1275,28 @@ el('cApply').onclick = () => {
 setInterval(() => { if (board.started && !board.over) el('sTime').textContent = fmt(board.elapsedMs()); }, 500);
 
 /* ==========================================================================
- * 主题：深色 / 浅色 / 跟随系统（三态，持久化）
- *
- * - 深色/浅色：显式选择，写 localStorage
- * - 跟随系统：监听 prefers-color-scheme，系统切换时实时跟随
- * - 默认深色（需求：默认深色模式）
- * - 纯 CSS 变量实现，无外部资源，离线可用
+ * 主题切换：默认深色，选择记在 localStorage
  * ======================================================================== */
-const THEME_KEY = 'laya-ms-theme';
-
-function systemPrefersLight() {
-  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
-}
-
-/** 把 <html data-theme> 设为最终生效的主题（dark / light） */
-function applyResolvedTheme(resolved) {
-  if (resolved === 'light') document.documentElement.setAttribute('data-theme', 'light');
-  else document.documentElement.removeAttribute('data-theme');
-}
-
-function resolveTheme(mode) {
-  if (mode === 'light') return 'light';
-  if (mode === 'dark') return 'dark';
-  return systemPrefersLight() ? 'light' : 'dark';       // system
-}
-
-function setThemeMode(mode) {
-  if (!['dark', 'light', 'system'].includes(mode)) mode = 'dark';
-  try { localStorage.setItem(THEME_KEY, mode); } catch (e) {}
-  applyResolvedTheme(resolveTheme(mode));
-  const sel = el('theme');
-  if (sel && sel.value !== mode) sel.value = mode;
-  window.__themeMode = mode;
-}
-
 (function initTheme() {
-  let saved = null;
-  try { saved = localStorage.getItem(THEME_KEY); } catch (e) {}
-  const mode = ['dark', 'light', 'system'].includes(saved) ? saved : 'dark';   // 默认深色
-  setThemeMode(mode);
+  const saved = (() => { try { return localStorage.getItem('laya-ms-theme'); } catch (e) { return null; } })();
+  const theme = saved === 'light' ? 'light' : 'dark';        // 默认深色
+  applyTheme(theme);
 
-  const sel = el('theme');
-  if (sel) sel.onchange = () => setThemeMode(sel.value);
-
-  // 跟随系统：系统切换时实时生效（仅在 system 模式下改变外观）
-  if (window.matchMedia) {
-    const mq = window.matchMedia('(prefers-color-scheme: light)');
-    const onSys = () => { if (window.__themeMode === 'system') applyResolvedTheme(resolveTheme('system')); };
-    if (mq.addEventListener) mq.addEventListener('change', onSys);
-    else if (mq.addListener) mq.addListener(onSys);
+  function applyTheme(t) {
+    if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    else document.documentElement.removeAttribute('data-theme');
+    const b = el('btnTheme');
+    if (b) b.textContent = t === 'light' ? '☀️ 浅色' : '🌙 深色';
+    try { localStorage.setItem('laya-ms-theme', t); } catch (e) {}
   }
+  window.__toggleTheme = () => {
+    const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    applyTheme(cur === 'light' ? 'dark' : 'light');
+  };
+  const b = el('btnTheme');
+  if (b) b.onclick = window.__toggleTheme;
+  // 不加「跟随系统」：需求是默认深色，跟随系统会让浅色系统的用户
+  // 一进来就是浅色，与"默认深色"矛盾。只有用户手动切过才改变。
 })();
 
 /* 窗口尺寸变化时重算格子大小（否则大棋盘在窄窗口里会溢出） */
