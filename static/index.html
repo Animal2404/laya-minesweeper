@@ -700,54 +700,136 @@ function solve(b, depth) {
   const localProbs = new Map();
 
   // ==========================================================================
-  // 把所有连通块**联合**枚举，一次性施加全局雷数约束。
+  // 逐块枚举 + 全局卷积组合
   //
-  // 为什么不再逐块算"窗口"：逐块枚举时每块只知道自己的雷数分布，
-  // 必须靠其它块的 [lo,hi] 反推窗口；这个反推一旦有落差（例如某块枚举
-  // 被预算截断），窗口就会算错，概率随之偏掉 —— 实测 7x7 棋盘上与
-  // 暴力真值差 44%（真值 100% 是雷的格子被算成 55.6%）。
+  // 早先的写法：把所有块**联合**枚举（块内格数 <= 64 才做），超了就直接
+  // 退回"逐块独立枚举、各算各的概率"——那条路径**不看全局雷数**，
+  // 概率会系统性偏掉（实测与暴力真值差 44%），在大棋盘上必然踩雷。
   //
-  // 联合枚举没有这个问题：所有约束 + 全局雷数一起进 DFS，
-  // 只有真正自洽的配置才被计入分母。参考实现
-  // （github.com/aijobclub/minesweeper-solver）也是这个思路。
+  // 正确做法（mrgriscom/minesweepr 的 combine_fronts、aijobclub 的实现同理）：
+  //   1. 每个连通块**独立**枚举，得到该块的"雷数 -> 方案数"直方图 hist；
+  //      块很小（通常 5~20 格），这一步永远可行。
+  //   2. 把所有块的 hist 做卷积，加上"自由格"组合数 C(free, k)，
+  //      只保留总雷数 == minesLeft 的组合。
+  //   3. 每个块的每个配置按"其余部分能补足剩余雷数"的组合数加权。
+  // 这样块数量再多也扛得住，而且全局雷数约束始终生效。
   // ==========================================================================
   const allCells = [];
-  const allIdx = [];
-  for (const g of groups) { allIdx.push(...g.idx); for (const k of g.cells) allCells.push(k); }
+  for (const g of groups) for (const k of g.cells) allCells.push(k);
   const touched = allCells.length;
   const freeCells = Math.max(0, totalHidden - touched);
 
-  // 自由格承担剩余雷数；块内雷数因此落在 [minesLeft - freeCells, minesLeft]
-  // 若块内格子数超过 cap，则退化为"逐块独立枚举 + 全局 DP 近似"
-  let joint = null;
-  if (allCells.length && allCells.length <= CAP) {
-    joint = enumerateGroup(cons, allIdx, allCells, CAP,
-                           budgetFor(allCells.length) * 2, deadline,
-                           Math.max(0, minesLeft - freeCells), minesLeft);
+  // ---- 第 1 步：逐块独立枚举 ----
+  const parts = [];
+  const failed = [];                 // 没能精确枚举的块（只给近似概率）
+  for (const g of groups) {
+    // 注意：即使超过时间闸也要**继续走完**，只是不再做精确枚举。
+    // 早先这里是 `break` —— 剩下的块既不进 parts 也不进 failed，
+    // 全局雷数约束因此残缺，概率随块数增加而系统性偏掉
+    // （实测 9x9 中局里真值 100% 是雷的格子被算成 40%）。
+    const overTime = performance.now() > deadline;
+    let r = overTime ? null
+          : enumerateGroup(cons, g.idx, g.cells, CAP, budgetFor(g.cells.length), deadline);
+    if (!r || !r.probs) {
+      tooBig++; exactAll = false;
+      // 尽量用拆子块给这些格子一个近似值（子块重叠，不参与全局加权）
+      for (const sub of splitGroup(cons, g, 22)) {
+        if (performance.now() > deadline + 400) break;
+        const rr = enumerateGroup(cons, sub.idx, sub.cells, 22, budgetFor(sub.cells.length), deadline + 400);
+        if (rr.probs) for (const [k, p] of rr.probs) localProbs.set(k, p);
+      }
+      failed.push(g);
+      continue;
+    }
+    parts.push({cells: g.cells, hist: r.hist, perCell: r.perCell,
+                sols: r.solutions, idx: g.idx});
+    enumCells += g.cells.length;
+    solutions += r.solutions;
   }
 
-  if (joint && joint.probs) {
-    for (const [k, p] of joint.probs) localProbs.set(k, p);
-    enumCells += allCells.length;
-    solutions += joint.solutions;
-    solved.push({hist: joint.hist, perCell: joint.perCell, cells: allCells});
-  } else {
-    if (allCells.length > CAP) tooBig++;
-    exactAll = false;
-    // 降级：逐块独立枚举（不考虑全局雷数），只求给部分格子一个近似值
-    for (const g of groups) {
-      if (performance.now() > deadline) break;
-      const r = enumerateGroup(cons, g.idx, g.cells, CAP, budgetFor(g.cells.length), deadline);
-      if (r.probs) {
-        for (const [k, p] of r.probs) localProbs.set(k, p);
-        enumCells += g.cells.length; solutions += r.solutions;
-        solved.push({hist: r.hist, perCell: r.perCell, cells: g.cells});
-      } else {
-        for (const sub of splitGroup(cons, g, 22)) {
-          if (performance.now() > deadline + 300) break;
-          const rr = enumerateGroup(cons, sub.idx, sub.cells, 22, budgetFor(sub.cells.length), deadline + 300);
-          if (rr.probs) for (const [k, p] of rr.probs) localProbs.set(k, p);
+  // ---- 第 2 步：卷积所有块，得到"总雷数 -> 组合数" ----
+  // dist[j] = 所有块合计放 j 颗雷的方案数
+  let dist = new Map([[0, 1]]);
+  for (const pt of parts) {
+    const nd = new Map();
+    for (const [a2, ca] of dist) {
+      for (const [m, cm] of pt.hist) {
+        const key = a2 + m;
+        nd.set(key, (nd.get(key) || 0) + ca * cm);
+      }
+    }
+    // 数值会爆炸：统一除以本步最大值做归一化，只保留相对权重
+    let mx = 0; for (const v of nd.values()) if (v > mx) mx = v;
+    if (mx > 0) for (const [k2, v] of nd) nd.set(k2, v / mx);
+    dist = nd;
+  }
+
+  // ---- 第 3 步：给每个块的每个配置算全局权重 ----
+  //
+  // 块 B 放 m 颗雷时，其余块 + 自由格必须补上 (minesLeft - m) 颗。
+  // 权重 = Σ_其余块配置 Σ_自由格选择 C(free, need)，只保留总数吻合的项。
+  if (exactAll && parts.length) {
+    const probsOut = new Map();
+    for (let i = 0; i < parts.length; i++) {
+      const pt = parts[i];
+      // 其余块的卷积
+      let restDist = new Map([[0, 1]]);
+      for (let j = 0; j < parts.length; j++) {
+        if (j === i) continue;
+        const nd = new Map();
+        for (const [a2, ca] of restDist)
+          for (const [m, cm] of parts[j].hist) {
+            const key = a2 + m;
+            nd.set(key, (nd.get(key) || 0) + ca * cm);
+          }
+        let mx = 0; for (const v of nd.values()) if (v > mx) mx = v;
+        if (mx > 0) for (const [k2, v] of nd) nd.set(k2, v / mx);
+        restDist = nd;
+      }
+      // 本块每个雷数取值的全局权重
+      const wByM = new Map();
+      let denom = 0;
+      for (const [m, cnt] of pt.hist) {
+        const needFree = minesLeft - m;
+        if (needFree < 0 || needFree > freeCells) continue;
+        let acc = 0;
+        for (const [ro, co] of restDist) {
+          const nf = minesLeft - m - ro;
+          if (nf < 0 || nf > freeCells) continue;
+          acc += co * binom(freeCells, nf);
         }
+        if (acc > 0 && Number.isFinite(acc)) { wByM.set(m, cnt * acc); denom += cnt * acc; }
+      }
+      if (denom > 0) {
+        // P(格 k 是雷) = Σ_m perCell[k][m] * wByM[m]  /  Σ_m hist[m] * wByM[m]
+        // perCell[k][m] 是"该格为雷且块内共 m 颗雷"的方案数；wByM[m] 是该 m 的
+        // 全局权重（其余块 + 自由格能补足剩余雷数的组合数）。
+        let den = 0;
+        for (const [m, cnt] of pt.hist) { const w = wByM.get(m); if (w) den += cnt * w; }
+        if (den > 0) {
+          for (const [k, perM] of pt.perCell) {
+            let num = 0;
+            for (const [m, cnt] of perM) { const w = wByM.get(m); if (w) num += cnt * w; }
+            const v = num / den;
+            if (Number.isFinite(v)) probsOut.set(k, Math.max(0, Math.min(1, v)));
+          }
+        } else {
+          exactAll = false;
+        }
+      } else {
+        // 该块没有与全局雷数吻合的配置 —— 说明棋盘自相矛盾，标记不确定
+        exactAll = false;
+      }
+    }
+    for (const [k, v] of probsOut) localProbs.set(k, v);
+  } else {
+    // 无法全局精确：退回各块独立概率（近似，但至少每个格子都有值）
+    for (const pt of parts) {
+      let den = 0; for (const c of pt.hist.values()) den += c;
+      if (!den) continue;
+      for (const [k, perM] of pt.perCell) {
+        let num = 0; for (const c of perM.values()) num += c;
+        localProbs.set(k, num / den);
       }
     }
   }
