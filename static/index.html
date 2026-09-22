@@ -1173,10 +1173,15 @@ function applyBoard(cols, rows, mines) {
 
 function paint() {
   const b = board;
-  // 预览序号只画"接下来要执行"的走法；对局结束或卡住时 preview 为空
+  // 预览序号只在**手动模式**下画。
+  //
+  // 自动玩/自动测试时每一步序号都会跳到新格子，而 .stepno 是整格覆盖的
+  // 蓝色半透明层 —— 于是整片棋盘高频闪蓝框（用户两次反馈）。
+  // 自动推进时序号没有阅读价值（变化太快），直接不画。
+  const busy = (typeof RUN !== 'undefined' && RUN.active) || auto;
   const stepNo = new Map();
-  const nextKey = (preview.length && !b.over) ? preview[0].key : null;
-  if (!b.over) preview.forEach((m, i) => { if (m.kind === 'reveal') stepNo.set(m.key, i + 1); });
+  const nextKey = (!busy && preview.length && !b.over) ? preview[0].key : null;
+  if (!busy && !b.over) preview.forEach((m, i) => { if (m.kind === 'reveal') stepNo.set(m.key, i + 1); });
 
   for (const d of el('board').children) {
     const r = +d.dataset.r, c = +d.dataset.c, x = b.cells[r][c];
@@ -1200,13 +1205,7 @@ function paint() {
         cls += solverFlags.has(k) ? ' flag solverflag' : ' flag';
       }
     }
-    // 预览序号：盖在整格上并居中，不改变格子尺寸，因此不会遮住数字或旗子。
-    // 自动/测试运行时**不**加 stepnext 高亮 —— 每一步它都会跳到新格子，
-    // 形成肉眼可见的蓝色闪烁（用户反馈）。手动模式保留，因为那时它是静止的指示。
-    if (stepNo.has(k)) {
-      const busy = (typeof RUN !== 'undefined' && RUN.active) || auto;
-      cls += (k === nextKey && !busy) ? ' stepnext' : '';
-    }
+    if (stepNo.has(k)) cls += (k === nextKey) ? ' stepnext' : '';
     d.className = cls;
     d.textContent = content;
     if (stepNo.has(k)) {
