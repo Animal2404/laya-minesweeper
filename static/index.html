@@ -7,17 +7,20 @@
 <style>
   /* 默认深色。切换 <html data-theme="light"> 即变浅色。 */
   :root{
-    --bg:#0f1218; --card:#171b24; --board:#1d222d; --line:#2b3240;
-    --fg:#e6e9f0; --dim:#8b95a8; --blue:#4a8cff; --blue2:#3a7ae8;
-    --num1:#6aa6ff; --num2:#4ecb7f; --num3:#ff6b5e; --num4:#b78cff;
-    --num5:#e0a24a; --num6:#45c8d8; --flag:#ff6b5e;
-    --raised:#2a3140; --open:#222836; --openblank:#1c2130;
-    --btn:#222836; --btnHover:#2c3543; --input:#1b2029;
-    --cellHover:#333c4d; --mineBg:#4a2622; --boomBg:#7a2f28;
-    --shadow:rgba(0,0,0,.4);
-    --solverFlag:#ffb454; --solverBg:rgba(255,180,84,.16);
-    --stepBg:rgba(74,140,255,.30); --stepFg:#eaf1ff; --stepLine:#4a8cff;
-    --stuckFg:#ffb454; --stuckBg:rgba(255,180,84,.12);
+    /* 深色主题：降低对比与饱和度，长时间看不累眼。
+       原来的 #0f1218 纯黑底 + #6aa6ff/#ff6b5e 高饱和霓虹，在暗环境里
+       眩光明显（用户反馈"费眼睛"）。现在整体抬亮底色、压低前景饱和度。 */
+    --bg:#1a1d23; --card:#22262e; --board:#272b34; --line:#363b45;
+    --fg:#dfe3ea; --dim:#9aa3b2; --blue:#5b8dd9; --blue2:#4a7ac2;
+    --num1:#7fa8e0; --num2:#6fbf8f; --num3:#e08a80; --num4:#ad92d6;
+    --num5:#cfa165; --num6:#6fbcc4; --flag:#e08a80;
+    --raised:#2e333c; --open:#2b3039; --openblank:#252931;
+    --btn:#2b3039; --btnHover:#343a45; --input:#262a32;
+    --cellHover:#3a4150; --mineBg:#4a3230; --boomBg:#6d3a36;
+    --shadow:rgba(0,0,0,.28);
+    --solverFlag:#d9a85e; --solverBg:rgba(217,168,94,.14);
+    --stepBg:rgba(91,141,217,.26); --stepFg:#eef2f8; --stepLine:#5b8dd9;
+    --stuckFg:#d9a85e; --stuckBg:rgba(217,168,94,.12);
   }
   :root[data-theme="light"]{
     --bg:#f2f3f7; --card:#ffffff; --board:#e9ecf2; --line:#d8dce6;
@@ -94,19 +97,25 @@
   .cell.hid{position:relative}
 
   /* 接下来第 N 步的预览序号：盖在格子上方居中，不遮数字/旗帜 */
-  /* 预览序号：只在右上角画一个小圆牌，**不再整格铺蓝底**。
-     整格蓝底在自动推进时每步跳到新格子，看起来就是全屏闪蓝框。
-     小圆牌既有 1234 的辨识度，又不会造成大面积闪烁。 */
+  /* 推演序号：**框住整个格子**，框内显示步数。
+     用内描边（inset box-shadow）而不是铺背景色 ——
+     既能一眼看出"这几个格子是接下来要走的"，又不会因为
+     自动推进时每步跳格而整片闪色（用户反馈过闪蓝框）。 */
+  .cell.stepno-cell{
+    box-shadow:inset 0 0 0 2px var(--stepLine);
+    background:var(--stepBg);
+    border-radius:2px}
   .cell .stepno{
-    position:absolute;top:1px;right:1px;
-    min-width:13px;height:13px;padding:0 2px;
+    position:absolute;inset:0;
     display:flex;align-items:center;justify-content:center;
-    font:800 9px/1 ui-monospace,Consolas,monospace;
-    color:#fff;background:var(--stepLine);
-    border-radius:7px;box-shadow:0 1px 3px rgba(0,0,0,.4);
+    font:800 var(--stepfs,15px)/1 ui-monospace,Consolas,monospace;
+    color:var(--stepFg);text-shadow:0 1px 3px rgba(0,0,0,.75);
     pointer-events:none;z-index:2}
-  /* 下一步用一圈描边突出，但不铺满整格 */
-  .cell.stepnext{box-shadow:inset 0 0 0 2px var(--stepLine)}
+  /* 下一步（即将执行的那一格）框更亮、数字更醒目 */
+  .cell.stepnext{
+    box-shadow:inset 0 0 0 2px var(--stepLine), 0 0 0 1px var(--stepLine);
+    background:var(--stepBg)}
+  .cell.stepnext .stepno{font-size:calc(var(--stepfs,15px) + 2px)}
 
   /* 状态行 + "无法继续推理"提示 */
   .statusrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
@@ -1117,6 +1126,8 @@ function buildGrid() {
   // 每格尺寸与字号用 CSS 变量下发，大棋盘自动缩小以免溢出
   g.style.setProperty('--cw', cs + 'px');
   g.style.setProperty('--cf', Math.max(9, Math.round(cs * 0.55)) + 'px');
+  // 推演序号字号：比格内数字略大，塞满格子才看得清（大棋盘会自动缩小）
+  g.style.setProperty('--stepfs', Math.max(10, Math.round(cs * 0.62)) + 'px');
   g.style.gridTemplateColumns = `repeat(${COLS}, ${cs}px)`;
   g.innerHTML = '';
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
@@ -1223,7 +1234,7 @@ function paint() {
         cls += solverFlags.has(k) ? ' flag solverflag' : ' flag';
       }
     }
-    if (stepNo.has(k)) cls += (k === nextKey) ? ' stepnext' : '';
+    if (stepNo.has(k)) cls += (k === nextKey) ? ' stepno-cell stepnext' : ' stepno-cell';
     d.className = cls;
     d.textContent = content;
     if (stepNo.has(k)) {
@@ -1747,23 +1758,73 @@ function planMoves(b, depth, maxMoves) {
 
     if (flagged && !sol.safe.size) continue;   // 全是旗、没有安全格 → 下一轮重解
 
-    // 推不出来 → 猜。候选是**全部**未知格，不只数字旁边
-    const all = [];
+    // ======================================================================
+    // 猜测候选
+    //
+    // 分成两类，**优先在"前沿"里猜**：
+    //   frontier —— 紧贴已揭开数字的未知格。猜中能立刻产生新约束，
+    //               是"从边上慢慢推进"的那种走法。
+    //   remote   —— 远离任何数字的未知格（比如角落里一大片空白）。
+    //               它们的概率全都等于同一个密度估计值，开了也学不到东西
+    //               —— 周围没有数字，不会产生任何新约束。
+    //
+    // 旧实现把两类混在一起按概率排序，于是经常"从里面开始"点那些
+    // 毫无信息量的格子，白白浪费一次猜测机会。
+    // ======================================================================
+    const frontier = [], remote = [];
     for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
       const x = sim.cells[r][c];
       if (x.op || x.flag) continue;
       const k = r + ',' + c;
       const v = sol.probs.get(k);
-      all.push({k, p: Number.isFinite(v) ? v : null});
+      const item = {k, p: Number.isFinite(v) ? v : null};
+      // 邻居里有已揭开的数字 → 属于前沿
+      if (sim.nb(r, c).some(([rr, cc]) => sim.cells[rr][cc].op && sim.cells[rr][cc].adj > 0)) frontier.push(item);
+      else remote.push(item);
+    }
+    // 只有当"前沿最优"明显比"远处最优"更危险时才考虑远处。
+    // 为什么还要留这个口子：前沿概率可能高达 60%+，而远处恒等于密度
+    // （20% 左右），这时去远处赌一把反而更划算。
+    const all = frontier.length ? frontier.slice() : remote.slice();
+    if (frontier.length && remote.length) {
+      const fp = frontier.reduce((m, x) => Math.min(m, x.p === null ? 1 : x.p), 1);
+      const rp = remote[0].p === null ? gp0(sim) : remote[0].p;
+      if (rp < fp - 0.20) all.push(...remote);      // 远处明显更安全才纳入
     }
     if (!all.length) { out.stuck = true; break; }
 
     const gp = estimateGlobal(sim);
     for (const x of all) if (x.p === null) x.p = gp;
-    all.sort((x, y) => (x.p - y.p) || (pot(sim, y.k) - pot(sim, x.k)));
+
+    // ======================================================================
+    // 猜测策略
+    //
+    // 参考实现（mrgriscom/minesweepr、squarejellyfish）在必须猜时只挑
+    // "概率最低"的格子；但扫雷圈的经验是：**信息增益**同样重要 ——
+    // 有时牺牲几个百分点的存活率，换来一次开出大片空白、解锁大量推理，
+    // 整局通关率反而更高。
+    //
+    // 这里用打分代替纯排序：
+    //   score = (1 - p)            存活概率
+    //         * (1 + gain)         开面收益（邻居越多未知格，越可能展开）
+    //         * (1 + frontierBonus) 该格是否紧贴已知数字（贴着的开了才有新约束）
+    // GUESS_W 控制"信息增益"的权重；0 = 退化成纯最低概率。
+    // ======================================================================
+    const GUESS_W = (typeof window !== 'undefined' && window.__guessW != null)
+                    ? window.__guessW : 0.9;
+    for (const x of all) {
+      const [r, c] = key2rc(x.k);
+      const nb = sim.nb(r, c);
+      const hiddenNb = nb.filter(([rr, cc]) => !sim.cells[rr][cc].op && !sim.cells[rr][cc].flag).length;
+      // 贴边加成：邻居里有已揭开的非零数字 → 开了立刻产生新约束
+      const touches = nb.some(([rr, cc]) => sim.cells[rr][cc].op && sim.cells[rr][cc].adj > 0);
+      const gain = (hiddenNb / 8) + (touches ? 0.6 : 0);
+      x.score = (1 - x.p) * (1 + GUESS_W * gain);
+    }
+    all.sort((x, y) => (y.score - x.score) || (x.p - y.p));
     const best = all[0];
     out.moves.push({kind: 'reveal', key: best.k, certain: false, p: best.p,
-                    reason: `无法唯一确定，选全局最低概率（${(100 * best.p).toFixed(1)}%）`});
+                    reason: `无法唯一确定，选综合最优（P(雷) ${(100 * best.p).toFixed(1)}%）`});
     out.guessed = true;
     break;   // 猜测之后局面未知，不再继续推演后续序号
   }
@@ -1797,6 +1858,13 @@ function applyMove(b, mv) {
   const ok = b.reveal(r, c);
   const hitMine = !wasOver && b.over && !b.win;
   return {ok: ok !== false, hitMine};
+}
+
+/** 现有棋盘的粗略密度：剩余雷数 / 剩余未知格数 */
+function gp0(b) {
+  const hidden = countHidden(b);
+  const left = MINES - b.flags;
+  return hidden > 0 ? Math.max(0, Math.min(1, left / hidden)) : 0;
 }
 
 /** 求解器自动插的旗（用于区分手动旗与算法旗） */
