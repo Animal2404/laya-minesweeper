@@ -10,15 +10,18 @@
     /* 深色主题：降低对比与饱和度，长时间看不累眼。
        原来的 #0f1218 纯黑底 + #6aa6ff/#ff6b5e 高饱和霓虹，在暗环境里
        眩光明显（用户反馈"费眼睛"）。现在整体抬亮底色、压低前景饱和度。 */
-    --bg:#1a1d23; --card:#22262e; --board:#272b34; --line:#363b45;
+    --bg:#1a1d23; --card:#22262e; --board:#232730; --line:#363b45;
     --fg:#dfe3ea; --dim:#9aa3b2; --blue:#5b8dd9; --blue2:#4a7ac2;
     --num1:#7fa8e0; --num2:#6fbf8f; --num3:#e08a80; --num4:#ad92d6;
     --num5:#cfa165; --num6:#6fbcc4; --flag:#e08a80;
-    --raised:#2e333c; --open:#2b3039; --openblank:#252931;
+    /* 未揭开格 vs 已揭开格必须一眼分清：
+       未揭开 = 亮面（--raised），已揭开 = 暗面（--open / --openblank）。
+       早先 #2e333c vs #2b3039 只差 3 个色阶，肉眼几乎分不出（用户反馈）。 */
+    --raised:#49515f; --open:#2a2f38; --openblank:#242931;
     --btn:#2b3039; --btnHover:#343a45; --input:#262a32;
-    --cellHover:#3a4150; --mineBg:#4a3230; --boomBg:#6d3a36;
+    --cellHover:#5a6373; --mineBg:#5a3733; --boomBg:#7d4340;
     --shadow:rgba(0,0,0,.28);
-    --solverFlag:#d9a85e; --solverBg:rgba(217,168,94,.14);
+    --solverFlag:#ffc267; --solverBg:#5c4a2e;
     --stepBg:rgba(91,141,217,.26); --stepFg:#eef2f8; --stepLine:#5b8dd9;
     --stuckFg:#d9a85e; --stuckBg:rgba(217,168,94,.12);
   }
@@ -80,7 +83,8 @@
     background:var(--board);padding:6px;border-radius:9px;user-select:none}
   .cell{width:var(--cw,25px);height:var(--cw,25px);border-radius:3px;display:flex;align-items:center;justify-content:center;
     font:700 var(--cf,13px)/1 ui-monospace,Consolas,monospace;cursor:pointer;transition:background .08s}
-  .cell.hid{background:var(--raised);box-shadow:inset 0 -1px 0 rgba(0,0,0,.18)}
+  .cell.hid{background:var(--raised);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.07), inset 0 -1px 0 rgba(0,0,0,.28)}
   .cell.hid:hover{background:var(--cellHover)}
   .cell.op{background:var(--open);cursor:default}
   .cell.op.blank{background:var(--openblank)}
