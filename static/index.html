@@ -378,20 +378,17 @@ class Board {
     return out;
   }
   /** 首次点击后再布雷。
-   *  保证：首点本身 + 周围 8 格都无雷 —— 也就是首点的 adj 一定为 0，
-   *  从而触发洪水填充、一次开出大片空白。
-   *  这一条很关键：若只保证"首点无雷"，周围有雷时 adj≠0 就不会展开，
-   *  开局后一个约束都没有，求解器只能盲猜（实测首步就 17% 概率踩雷）。 */
+   *
+   *  两条保证：
+   *   1. 首点半径 2（5x5）内无雷 → 必然触发洪水填充，开局拿到大量约束。
+   *   2. 小棋盘上尝试生成"无需猜测即可通关"的布局（no-guess minesweeper）。
+   *      若这盘必须猜，就换一副雷重布 —— 最多试 MAX_TRIES 次。
+   *      这样 9x9 这类小盘可以做到接近 100% 通关：不是猜得准，
+   *      而是**根本不需要猜**。
+   *
+   *  大棋盘不做第 2 条（可解布局太稀少，试 60 次也碰不到，白费时间）。
+   */
   plant(sr, sc) {
-    // 保证首点周围一整片无雷，而不只是 3x3。
-    //
-    // 为什么：高密度盘面（困难 29.2%）下，3x3 之外紧挨着就是雷，
-    // 首点的 8 个邻居全是有数字的格子 —— 洪水填充只能揭开 9 格就停，
-    // 开局等于零信息，第 0 步就得盲猜（实测困难难度就是这个下场）。
-    //
-    // 把无雷区扩到 5x5（半径 2），首点邻域内会出现大量 adj=0 的格子，
-    // 洪水填充能连锁推开一大片，开局立刻拿到几十条约束。
-    // 这也是扫雷玩家的标准开局做法（"找大空区"）。
     const safe = new Set([sr + ',' + sc]);
     const RAD = 2;
     for (let dr = -RAD; dr <= RAD; dr++) for (let dc = -RAD; dc <= RAD; dc++) {
@@ -401,20 +398,40 @@ class Board {
     const pool = [];
     for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
       if (!safe.has(r + ',' + c)) pool.push([r, c]);
-    // Fisher-Yates，取前 MINES 个
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
+
+    // 小盘（<= 220 格）才尝试"保证可解"，否则只布一次
+    const small = ROWS * COLS <= 220;
+    const MAX_TRIES = small ? 80 : 1;
+    let bestFallback = null;
+
+    for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+      // 清空上一次的雷
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) this.cells[r][c].mine = false;
+      // Fisher-Yates 后取前 MINES 个
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+      }
+      for (let i = 0; i < MINES && i < pool.length; i++) {
+        const rc = pool[i]; this.cells[rc[0]][rc[1]].mine = true;
+      }
+      // 重算 adj
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+        let n = 0;
+        for (const nb of this.nb(r, c)) if (this.cells[nb[0]][nb[1]].mine) n++;
+        this.cells[r][c].adj = n;
+      }
+      if (!small) break;
+
+      // 在克隆盘上试解：首点 + 洪水填充，然后只用"必然"走法推进
+      const trial = cloneBoard(this);
+      trial.started = true;
+      trial.cells[sr][sc].flag = false;
+      trial.reveal(sr, sc);
+      if (isGuessFreeBoard(trial)) { bestFallback = 'ok'; break; }
     }
-    for (let i = 0; i < MINES && i < pool.length; i++) {
-      const [r, c] = pool[i];
-      this.cells[r][c].mine = true;
-    }
-    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-      let n = 0;
-      for (const [rr, cc] of this.nb(r, c)) if (this.cells[rr][cc].mine) n++;
-      this.cells[r][c].adj = n;
-    }
+    void bestFallback;
+
     this.started = true; this.t0 = Date.now();
   }
   reveal(r, c) {
@@ -1994,6 +2011,35 @@ function applyMove(b, mv) {
   const ok = b.reveal(r, c);
   const hitMine = !wasOver && b.over && !b.win;
   return {ok: ok !== false, hitMine};
+}
+
+/** 只用"必然安全 / 必然是雷"推进，能否不解任何一步而通关？
+ *  用于生成 no-guess 棋盘。用 depth=1（最弱的推理档）判定 ——
+ *  真实游戏用 depth=3，只会更强，所以这里判定通过就一定可解。 */
+function isGuessFreeBoard(b) {
+  const sim = cloneBoard(b);
+  sim.started = true;
+  for (let guard = 0; guard < 3000; guard++) {
+    if (sim.revealed >= ROWS * COLS - MINES) return true;     // 全清
+    if (sim.over) return false;
+    const sol = solve(sim, 1);
+    if (!sol || !sol.safe || !sol.mines) return false;
+    let moved = false;
+    for (const k of sol.safe) {
+      const rc = key2rc(k);
+      if (!sim.cells[rc[0]][rc[1]].op && !sim.cells[rc[0]][rc[1]].flag) {
+        sim.reveal(rc[0], rc[1]); moved = true;
+      }
+    }
+    for (const k of sol.mines) {
+      const rc = key2rc(k);
+      if (!sim.cells[rc[0]][rc[1]].flag && !sim.cells[rc[0]][rc[1]].op) {
+        sim.toggleFlag(rc[0], rc[1]); moved = true;
+      }
+    }
+    if (!moved) return false;                                  // 推不动 → 必须猜
+  }
+  return false;
 }
 
 /** 现有棋盘的粗略密度：剩余雷数 / 剩余未知格数 */
