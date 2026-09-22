@@ -94,13 +94,19 @@
   .cell.hid{position:relative}
 
   /* 接下来第 N 步的预览序号：盖在格子上方居中，不遮数字/旗帜 */
+  /* 预览序号：只在右上角画一个小圆牌，**不再整格铺蓝底**。
+     整格蓝底在自动推进时每步跳到新格子，看起来就是全屏闪蓝框。
+     小圆牌既有 1234 的辨识度，又不会造成大面积闪烁。 */
   .cell .stepno{
-    position:absolute;inset:auto auto 0 0;width:100%;height:100%;
+    position:absolute;top:1px;right:1px;
+    min-width:13px;height:13px;padding:0 2px;
     display:flex;align-items:center;justify-content:center;
-    font:800 var(--stepfs,11px)/1 ui-monospace,Consolas,monospace;
-    color:var(--stepFg);background:var(--stepBg);border-radius:inherit;
-    pointer-events:none;text-shadow:0 0 3px rgba(0,0,0,.28)}
-  .cell.stepnext .stepno{box-shadow:inset 0 0 0 2px var(--stepLine)}
+    font:800 9px/1 ui-monospace,Consolas,monospace;
+    color:#fff;background:var(--stepLine);
+    border-radius:7px;box-shadow:0 1px 3px rgba(0,0,0,.4);
+    pointer-events:none;z-index:2}
+  /* 下一步用一圈描边突出，但不铺满整格 */
+  .cell.stepnext{box-shadow:inset 0 0 0 2px var(--stepLine)}
 
   /* 状态行 + "无法继续推理"提示 */
   .statusrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
@@ -194,9 +200,9 @@
         <label for="depth">推演深度</label>
         <select id="depth">
           <option value="1">1 步</option>
-          <option value="2" selected>2 步</option>
+          <option value="2">2 步</option>
           <option value="3">3 步</option>
-          <option value="4">4 步</option>
+          <option value="4" selected>4 步（最高）</option>
         </select>
       </div>
     </div>
@@ -1178,10 +1184,22 @@ function paint() {
   // 自动玩/自动测试时每一步序号都会跳到新格子，而 .stepno 是整格覆盖的
   // 蓝色半透明层 —— 于是整片棋盘高频闪蓝框（用户两次反馈）。
   // 自动推进时序号没有阅读价值（变化太快），直接不画。
+  // 序号（1234 小圆牌）始终显示 —— 它只是角落一个小圆点，不会造成闪烁。
+  // 只有"下一步"的整圈描边在自动推进时省略，因为那才是大面积跳动的来源。
   const busy = (typeof RUN !== 'undefined' && RUN.active) || auto;
   const stepNo = new Map();
+  // 只给 reveal 走法编号，且用一个独立计数器。
+  // 早先用数组下标 i+1，插旗的走法被跳过但下标照涨，于是会出现 "5" 这种
+  // 超过 4 的序号（预览最多 4 步）。
+  let seq = 0;
   const nextKey = (!busy && preview.length && !b.over) ? preview[0].key : null;
-  if (!busy && !b.over) preview.forEach((m, i) => { if (m.kind === 'reveal') stepNo.set(m.key, i + 1); });
+  if (!b.over) {
+    for (const m of preview) {
+      if (m.kind !== 'reveal') continue;
+      seq++;
+      if (seq <= 4) stepNo.set(m.key, seq);
+    }
+  }
 
   for (const d of el('board').children) {
     const r = +d.dataset.r, c = +d.dataset.c, x = b.cells[r][c];
@@ -1806,7 +1824,7 @@ async function doStep(useLaya) {
       board.steps++;
       setStatus(`开局：揭开 <b>R${key2rc(mv.key)[0] + 1}C${key2rc(mv.key)[1] + 1}</b> 取信息（首点保证不踩雷）。`);
       markNoLaya('开局还没有任何已知数字，无从判断，因此没有询问 Laya。');
-      refreshPreview();
+      adoptPreview(pl);
       return;
     }
 
@@ -1817,12 +1835,15 @@ async function doStep(useLaya) {
     perf.solve.push(lastSolveMs);
     if (perf.solve.length > 400) perf.solve.shift();
 
+    // 直接复用这次的规划结果做预览，**不要**再调 refreshPreview()
+    // —— 那会再完整跑一遍 planMoves（每步求解两次，是"变慢"的主因）。
     const sol = pl.sol;
     const mv = pl.moves[0];
+    adoptPreview(pl);
     if (!mv) {
       stuckNow = true;
       setStatus('无法继续推理：没有可走的格子了。');
-      refreshPreview();
+      adoptPreview(pl);
       return;
     }
     stuckNow = false;
@@ -1834,7 +1855,7 @@ async function doStep(useLaya) {
       setStatus(`约束推导出 <b>${marks.length}</b> 个必然是雷 → 已自动插旗`
                 + (sol && sol.safe.size ? `，同时还有 ${sol.safe.size} 个必然安全格待揭。` : '。'));
       markNoLaya('这一步由约束求解直接确定，没有询问 Laya。上表是最近一次 Laya 与数学真值的对比。');
-      refreshPreview();
+      adoptPreview(pl);
       paint();
       return;
     }
@@ -1850,7 +1871,7 @@ async function doStep(useLaya) {
       const extra = n > 1 ? `（另有 ${n - 1} 格也可确定安全）` : '';
       setStatus(`约束求解出 <b>${n}</b> 个必然安全格 → 揭开 R${pr + 1}C${pc + 1} ${extra}`);
       markNoLaya('这一步由约束求解直接确定，没有询问 Laya。上表是最近一次 Laya 与数学真值的对比。');
-      refreshPreview();
+      adoptPreview(pl);
       paint();
       return;
     }
@@ -1919,7 +1940,7 @@ async function doStep(useLaya) {
     }
     if (err) msg += ` · Laya 出错：${err.slice(0, 80)}`;
     setStatus(msg + (hit.hitMine ? ' —— 踩雷了。' : ''));
-    refreshPreview();
+    adoptPreview(pl);
     paint();
   } catch (e) {
     // 求解器抛错：不白屏、不卡死，保留棋盘并明确报错
@@ -1930,6 +1951,7 @@ async function doStep(useLaya) {
     busy = false;
     el('btnAuto').disabled = false; el('btnStep').disabled = false;
     if (board.over) { stopAuto(); clearPreview(); }
+    else if (board.started && !preview.length) refreshPreview();   // 兜底：预览为空才算
     paint();
   }
 }
@@ -1940,6 +1962,27 @@ function hintWorthy(b, r, c) {
 }
 
 /** 重新计算并刷新 4 步预览 */
+/** 把一次已有的 planMoves 结果直接设为预览（不重新求解） */
+function adoptPreview(pl) {
+  if (board.over || !board.started) { clearPreview(); return; }
+  // doStep 里各分支调用本函数的时机不完全一致（有的在 applyMove 之前、
+  // 有的在之后）。与其逐处对齐顺序，不如**按棋盘当前状态过滤掉已完成的走法**：
+  // 这样无论先后，剩下的都是真正"接下来要走"的，序号也就不会空。
+  const rest = [];
+  for (const m of ((pl && pl.moves) || [])) {
+    const [r, c] = key2rc(m.key);
+    const x = board.cells[r][c];
+    if (!x) continue;
+    if (m.kind === 'reveal' && x.op) continue;      // 已揭开 → 这步做完了
+    if (m.kind === 'flag' && x.flag) continue;      // 已插旗 → 这步做完了
+    rest.push(m);
+  }
+  preview = rest;
+  stuckNow = preview.length === 0 && !!(pl && pl.stuck);
+  const so = document.getElementById('stuck');
+  if (so) { if (stuckNow) { so.textContent = '无法继续推理'; so.classList.add('on'); } else so.classList.remove('on'); }
+}
+
 function refreshPreview() {
   if (board.over) { clearPreview(); return; }
   if (!board.started) { clearPreview(); return; }
