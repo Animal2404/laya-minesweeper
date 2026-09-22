@@ -1604,23 +1604,19 @@ function solverSource() {
     'const NB = ' + JSON.stringify(NB) + ';',
     (typeof Board !== 'undefined' ? Board.toString() : ''),
   ];
-  // 自检：只核对**确实需要序列化**的那批顶层函数，别去猜源码里的标识符
-  // —— planMoves/solve 内部有大量局部变量（C、P）和 Board 的方法（plant），
-  // 按名字硬猜会误报，反而挡住正常运行。
+  // 求解器需要序列化进 Worker 的**全部**顶层函数。
+  // 漏一个 → Worker 里抛 ReferenceError → 整局被记成"出错"。
+  const FNS = {
+    buildConstraints, key2rc, components, enumerateGroup, combineGlobally,
+    binom, logBinom, lgamma, logBinomSafe, splitGroup, solve, planMoves,
+    cloneBoard, applyMove, countHidden, estimateGlobal, pot, hintWorthy, gp0,
+  };
   const missing = [];
-  for (const [name, fn] of Object.entries({
-      buildConstraints, key2rc, components, enumerateGroup, combineGlobally,
-      binom, logBinom, lgamma, logBinomSafe, splitGroup, solve, planMoves,
-      cloneBoard, applyMove, countHidden, estimateGlobal, pot, hintWorthy, gp0})) {
-    if (typeof fn !== 'function') missing.push(name);
+  for (const [name, fn] of Object.entries(FNS)) {
+    if (typeof fn !== 'function') { missing.push(name); continue; }
+    parts.push(fn.toString());          // ← 必须真的压进去
   }
   if (typeof Board === 'undefined') missing.push('Board');
-  // 真正有用的检查：这些函数的源码是否都在拼出来的字符串里
-  for (const [name, fn] of Object.entries({gp0, planMoves, solve, applyMove, cloneBoard})) {
-    if (typeof fn === 'function' && !parts.join(String.fromCharCode(10)).includes(fn.toString())) {
-      missing.push(name + '(未拼入)');
-    }
-  }
   return {src: parts.join(String.fromCharCode(10)), missing: missing};
 }
 
