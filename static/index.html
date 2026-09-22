@@ -249,6 +249,14 @@
         <label>棋盘
           <select id="runLevel"></select>
         </label>
+        <label>速度
+          <select id="runSpeed">
+            <option value="0">最快（不演示）</option>
+            <option value="4">快</option>
+            <option value="12" selected>正常</option>
+            <option value="45">慢（看得清）</option>
+          </select>
+        </label>
         <button id="btnRun" class="primary">开始测试</button>
         <button id="btnRunStop" class="ghost" disabled>停止</button>
       </div>
@@ -258,6 +266,7 @@
         <div class="kpi"><div class="k">进度</div><div class="v" id="kProg">—</div><div class="n" id="kProgN"></div></div>
         <div class="kpi"><div class="k">平均每局猜测</div><div class="v" id="kGuess">—</div><div class="n">越少越好</div></div>
         <div class="kpi"><div class="k">平均每局推理</div><div class="v" id="kDeduce">—</div><div class="n">越多越好</div></div>
+        <div class="kpi"><div class="k">总时长</div><div class="v" id="kTime">—</div><div class="n" id="kTimeN">测试耗时</div></div>
       </div>
 
       <div class="track big" id="runTrack" style="display:none"><i></i></div>
@@ -1191,8 +1200,13 @@ function paint() {
         cls += solverFlags.has(k) ? ' flag solverflag' : ' flag';
       }
     }
-    // 预览序号：盖在整格上并居中，不改变格子尺寸，因此不会遮住数字或旗子
-    if (stepNo.has(k)) cls += (k === nextKey) ? ' stepnext' : '';
+    // 预览序号：盖在整格上并居中，不改变格子尺寸，因此不会遮住数字或旗子。
+    // 自动/测试运行时**不**加 stepnext 高亮 —— 每一步它都会跳到新格子，
+    // 形成肉眼可见的蓝色闪烁（用户反馈）。手动模式保留，因为那时它是静止的指示。
+    if (stepNo.has(k)) {
+      const busy = (typeof RUN !== 'undefined' && RUN.active) || auto;
+      cls += (k === nextKey && !busy) ? ' stepnext' : '';
+    }
     d.className = cls;
     d.textContent = content;
     if (stepNo.has(k)) {
@@ -1244,87 +1258,152 @@ function renderCmp() {}
  * 用 setTimeout 分片，每片最多 25ms —— 否则大棋盘上一局几万步，
  * 同步跑会让页面完全卡死。
  * ======================================================================== */
-const RUN = {active: false, stop: false, n: 0, done: 0, wins: 0,
-             guessSum: 0, deduceSum: 0, stalled: 0, errors: 0,
-             cols: 30, rows: 16, mines: 99};
 
 /** 独立模拟一局：用临时全局尺寸跑，结束后恢复，不碰真实棋盘 */
-function simulateOne(cols, rows, mines) {
-  const savedC = COLS, savedR = ROWS, savedM = MINES;
-  COLS = cols; ROWS = rows; MINES = mines;
-  try {
-    const b = new Board();
-    b.cells = Array.from({length: rows}, () => Array.from({length: cols},
-      () => ({mine: false, op: false, flag: false, adj: 0})));
-    const pool = [];
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) pool.push([r, c]);
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
-    }
-    for (let i = 0; i < Math.min(mines, pool.length); i++) {
-      const [r, c] = pool[i]; b.cells[r][c].mine = true;
-    }
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      let k = 0;
-      for (const [rr, cc] of b.nb(r, c)) if (b.cells[rr][cc].mine) k++;
-      b.cells[r][c].adj = k;
-    }
-    // 找 3x3 无雷点开局（对应 plant() 的保证）
-    let st = null;
-    for (let r = 1; r < rows - 1 && !st; r++) for (let c = 1; c < cols - 1 && !st; c++) {
-      let okk = true;
-      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++)
-        if (b.cells[r + dr][c + dc].mine) okk = false;
-      if (okk) st = [r, c];
-    }
-    if (!st) return {skip: true};
-    b.started = true; b.t0 = Date.now();
-    b.reveal(st[0], st[1]);
+/** 一局的实时状态：在**真实棋盘**上跑，玩家看得见 */
+const RUN = {
+  active: false, stop: false, n: 0, done: 0, wins: 0,
+  guessSum: 0, deduceSum: 0, stalled: 0, errors: 0,
+  cols: 30, rows: 16, mines: 99,
+  guessesInGame: 0, deduceInGame: 0, timer: null, speed: 12,
+  t0: 0, elapsed: 0
+};
 
-    let guesses = 0, deduced = 0;
-    const LIMIT = Math.max(4000, cols * rows * 4);
-    for (let step = 0; step < LIMIT; step++) {
-      if (b.over) return {win: !!b.win, guesses, deduced};
-      const pl = planMoves(b, 3, 4);
-      if (!pl.moves.length) return {win: false, guesses, deduced, stalled: true};
-      const mv = pl.moves[0];
-      if (mv.certain) deduced++; else guesses++;
-      const res = applyMove(b, mv);
-      if (res.hitMine) return {win: false, guesses, deduced};
-    }
-    return {win: false, guesses, deduced, stalled: true};
-  } finally {
-    COLS = savedC; ROWS = savedR; MINES = savedM;
-  }
+/** 毫秒 -> 人类可读，如 1:23.4 / 12.3s */
+function fmtDur(ms) {
+  if (!ms || ms < 0) return '—';
+  if (ms < 1000) return Math.round(ms) + ' 毫秒';
+  const s = ms / 1000;
+  if (s < 60) return (s < 10 ? s.toFixed(2) : s.toFixed(1)) + ' 秒';
+  const m = Math.floor(s / 60), r = s % 60;
+  return m + ' 分 ' + r.toFixed(0).padStart(2, '0') + ' 秒';
 }
 
 function updateRunKpis() {
   const n = RUN.done || 1;
   const rate = 100 * RUN.wins / n;
-  el('kWin').textContent = rate.toFixed(1) + '%';
+  el('kWin').textContent = RUN.done ? rate.toFixed(1) + '%' : '—';
   el('kWinN').textContent = RUN.wins + ' / ' + RUN.done + ' 局通关';
   el('kProg').textContent = RUN.done + ' / ' + RUN.n;
-  el('kGuess').textContent = (RUN.guessSum / n).toFixed(1);
-  el('kDeduce').textContent = (RUN.deduceSum / n).toFixed(0);
+  el('kGuess').textContent = RUN.done ? (RUN.guessSum / n).toFixed(1) : '—';
+  el('kDeduce').textContent = RUN.done ? (RUN.deduceSum / n).toFixed(0) : '—';
   const bar = el('runTrack').firstElementChild;
   if (bar) bar.style.width = (100 * RUN.done / RUN.n).toFixed(1) + '%';
   el('runTrack').className = 'track big ' + (rate >= 60 ? 'good' : rate >= 25 ? 'mid' : 'low');
+  // 总时长：运行中实时走，结束后冻结
+  const el2 = RUN.active && RUN.t0 ? (performance.now() - RUN.t0) : RUN.elapsed;
+  el('kTime').textContent = fmtDur(el2);
 }
 
-function finishRun() {
+/** 开新的一局（清空棋盘、切到测试用的尺寸） */
+function runNewGame() {
+  const lv = LEVEL_BY_ID[el('runLevel').value] || LEVEL_BY_ID['default'];
+  COLS = lv.cols; ROWS = lv.rows; MINES = lv.mines;
+  board.reset();
+  solverFlags.clear(); clearPreview();
+  board.steps = 0;
+  RUN.guessesInGame = 0; RUN.deduceInGame = 0;
+  buildGrid(); paint();
+}
+
+function finishRun(reason) {
   RUN.active = false;
+  if (RUN.t0) RUN.elapsed = performance.now() - RUN.t0;   // 冻结总时长
+  if (RUN.timer) { clearTimeout(RUN.timer); RUN.timer = null; }
   el('btnRun').disabled = false; el('btnRunStop').disabled = true;
+  el('btnAuto').disabled = false;
   const n = RUN.done || 1;
   const rate = 100 * RUN.wins / n;
   const lv = LEVEL_BY_ID[el('runLevel').value] || {};
-  let txt = `${lv.name || '棋盘'}（${RUN.cols}×${RUN.rows}=${RUN.cols*RUN.rows} 格，`
-          + `${RUN.mines} 雷，密度 ${(100*RUN.mines/(RUN.cols*RUN.rows)).toFixed(1)}%）`
-          + `跑完 ${RUN.done} 局：通关 ${RUN.wins} 局，通关率 ${rate.toFixed(1)}%。`;
-  if (RUN.stop) txt += '（手动停止）';
+  let txt = `跑完 ${RUN.done} 局：通关 ${RUN.wins} 局，通关率 ${rate.toFixed(1)}%。`
+          + ` 总耗时 ${fmtDur(RUN.elapsed)}`;
+  if (RUN.done > 0) {
+    txt += `，平均每局 ${fmtDur(RUN.elapsed / RUN.done)}。`
+         + ` 平均每局猜测 ${(RUN.guessSum/n).toFixed(1)} 次、推理 ${(RUN.deduceSum/n).toFixed(0)} 步。`;
+  } else {
+    txt += '。';
+  }
+  if (reason === 'stop') txt += '（手动停止）';
   if (RUN.stalled) txt += ` 其中 ${RUN.stalled} 局卡住。`;
   if (RUN.errors) txt += ` ${RUN.errors} 局出错。`;
   el('runNote').textContent = txt;
+  setStatus(txt);
+}
+
+/**
+ * 跑一步：逐局在**真实棋盘**上演示，所以画面会动。
+ * 用 setTimeout 串起来，每步之间留出渲染时间；可随时「停止」。
+ */
+function runTick() {
+  if (!RUN.active) return;
+  // 停止检查：早先漏了这一步，导致点了「停止」还继续跑
+  if (RUN.stop) { finishRun('stop'); return; }
+
+  // 一局结束 → 记录成绩，准备下一局
+  if (board.over) {
+    const won = board.win;
+    if (won) RUN.wins++;
+    RUN.guessSum += RUN.guessesInGame;
+    RUN.deduceSum += RUN.deduceInGame;
+    RUN.done++;
+    updateRunKpis();
+    if (RUN.done >= RUN.n) { finishRun('done'); return; }
+    setStatus(`第 ${RUN.done} 局 ${won ? '通关' : '失败'}，准备下一局…`);
+    RUN.timer = setTimeout(() => {
+      if (RUN.stop) { finishRun('stop'); return; }
+      runNewGame();
+      setStatus(`测试第 ${RUN.done + 1} / ${RUN.n} 局`);
+      RUN.timer = setTimeout(runTick, 200);
+    }, 420);
+    return;
+  }
+
+  // 未开局 → 开一格
+  if (!board.started) {
+    const pl = planMoves(board, 3, 4);
+    const mv = pl.moves[0];
+    if (!mv) { RUN.stalled++; RUN.done++; updateRunKpis();
+               if (RUN.done < RUN.n) { runNewGame(); RUN.timer = setTimeout(runTick, 200); }
+               else finishRun('done'); return; }
+    applyMove(board, mv);
+    board.steps++;
+    paint();
+    RUN.timer = setTimeout(runTick, RUN.speed);
+    return;
+  }
+
+  // 正常一步
+  let pl;
+  try { pl = planMoves(board, 3, 4); }
+  catch (e) { RUN.errors++; RUN.done++; updateRunKpis();
+              if (RUN.done < RUN.n) { runNewGame(); RUN.timer = setTimeout(runTick, 200); }
+              else finishRun('done'); return; }
+
+  if (!pl.moves.length) {
+    // 卡住：算失败，进下一局
+    RUN.stalled++; RUN.done++; updateRunKpis();
+    if (RUN.done >= RUN.n) { finishRun('done'); return; }
+    setStatus(`第 ${RUN.done} 局卡住，准备下一局…`);
+    RUN.timer = setTimeout(() => { runNewGame(); RUN.timer = setTimeout(runTick, 200); }, 380);
+    return;
+  }
+
+  const mv = pl.moves[0];
+  if (mv.certain) RUN.deduceInGame++; else RUN.guessesInGame++;
+  applyMove(board, mv);
+  if (mv.kind !== 'flag') board.steps++;
+  if (mv.kind === 'flag') solverFlags.add(mv.key);
+  // 演示模式的进度显示"当前正在跑第几局"，否则整局跑完前进度条一动不动
+  el('kProg').textContent = RUN.done + ' / ' + RUN.n + '（第 ' + (RUN.done + 1) + ' 局进行中）';
+  el('kTime').textContent = fmtDur(performance.now() - RUN.t0);
+  preview = pl.moves.slice();          // 让 4 步预览跟着走
+  paint();
+
+  const hit = board.over && !board.win;
+  setStatus(`测试中 第 ${RUN.done + 1}/${RUN.n} 局 · 步 ${board.steps} · `
+          + `${mv.certain ? '推理' : '<b>猜测</b>'} R${key2rc(mv.key)[0]+1}C${key2rc(mv.key)[1]+1}`
+          + (hit ? ' —— 踩雷' : ''));
+  RUN.timer = setTimeout(runTick, RUN.speed);
 }
 
 function startRun() {
@@ -1333,34 +1412,195 @@ function startRun() {
   RUN.n = +el('runN').value;
   RUN.done = 0; RUN.wins = 0; RUN.guessSum = 0; RUN.deduceSum = 0;
   RUN.stalled = 0; RUN.errors = 0;
+  RUN.t0 = performance.now(); RUN.elapsed = 0;
 
   const lv = LEVEL_BY_ID[el('runLevel').value] || LEVEL_BY_ID['default'];
   RUN.cols = lv.cols; RUN.rows = lv.rows; RUN.mines = lv.mines;
+  RUN.speed = +el('runSpeed').value;
 
   el('btnRun').disabled = true; el('btnRunStop').disabled = false;
+  el('btnAuto').disabled = true;
   el('runKpis').style.display = ''; el('runTrack').style.display = '';
-  el('runNote').textContent = '测试进行中…';
+  el('runNote').textContent = '测试进行中 —— 棋盘上会实时演示每一局。';
   updateRunKpis();
 
-  const slice = () => {
-    if (RUN.stop || RUN.done >= RUN.n) { finishRun(); return; }
-    const t0 = performance.now();
-    while (RUN.done < RUN.n && performance.now() - t0 < 25) {
-      let res;
-      try { res = simulateOne(RUN.cols, RUN.rows, RUN.mines); }
-      catch (e) { RUN.errors++; res = {skip: true}; }
-      RUN.done++;
-      if (!res.skip) {
-        if (res.win) RUN.wins++;
-        RUN.guessSum += res.guesses || 0;
-        RUN.deduceSum += res.deduced || 0;
-        if (res.stalled) RUN.stalled++;
-      }
-      updateRunKpis();
-    }
-    setTimeout(slice, 0);
+  runNewGame();
+  setStatus(`测试第 1 / ${RUN.n} 局`);
+
+  // 时长实时刷新（否则只在一局结束时才跳一次）
+  const tickTime = () => {
+    if (!RUN.active) return;
+    RUN.elapsed = performance.now() - RUN.t0;
+    el('kTime').textContent = fmtDur(RUN.elapsed);
+    setTimeout(tickTime, 200);
   };
-  setTimeout(slice, 0);
+  setTimeout(tickTime, 200);
+
+  if (RUN.speed === 0) {
+    // 最快模式：用 Web Worker 在后台线程跑，主线程完全不受影响。
+    // 早先在主线程分片跑，大棋盘上会把页面拖到崩溃（实测 Target crashed）。
+    startWorkerRun();
+    return;
+  }
+  RUN.timer = setTimeout(runTick, 260);
+}
+
+/* ==========================================================================
+ * 后台批量测试（Web Worker）
+ *
+ * 把求解器代码整段注入 Worker，在独立线程里跑完 N 局，只把汇总数字传回来。
+ * 这样主线程全程可交互，也不会因为长时间同步计算把页面拖崩。
+ * ======================================================================== */
+let RUN_WORKER = null;
+
+function solverSource() {
+  // 注意：<script> 里的顶层声明位于全局**词法**作用域，不会挂到 globalThis，
+  // 所以必须用标识符直接引用（早先用 globalThis[n] 查表，取到的全是 undefined，
+  // 结果 Worker 里没有 Board 等定义，100 局全部报错）。
+  const parts = [
+    'let COLS=30, ROWS=16, MINES=99;',
+    'const solverFlags=new Set(); let preview=[]; let stuckNow=false;',
+    'function density(){return MINES/(COLS*ROWS);}',
+    'const NB = ' + JSON.stringify(NB) + ';',
+    (typeof Board !== 'undefined' ? Board.toString() : ''),
+    buildConstraints.toString(), key2rc.toString(), components.toString(),
+    enumerateGroup.toString(), combineGlobally.toString(),
+    binom.toString(), logBinom.toString(), lgamma.toString(), logBinomSafe.toString(),
+    splitGroup.toString(), solve.toString(), planMoves.toString(),
+    cloneBoard.toString(), applyMove.toString(), countHidden.toString(),
+    estimateGlobal.toString(), pot.toString(), hintWorthy.toString(),
+  ];
+  return parts.filter(p => p && p.length).join(String.fromCharCode(10));
+}
+
+function startWorkerRun() {
+  try {
+    const body = solverSource();
+    const workerCode = body + `
+      self.onmessage = function(ev){
+        const {n, cols, rows, mines, depth} = ev.data;
+        COLS=cols; ROWS=rows; MINES=mines;
+        let wins=0, guessSum=0, deduceSum=0, stalled=0, errors=0;
+        for (let g=0; g<n; g++){
+          try {
+            const b = new Board();
+            b.cells = Array.from({length:rows},()=>Array.from({length:cols},
+              ()=>({mine:false,op:false,flag:false,adj:0})));
+            const pool=[];
+            for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)pool.push([r,c]);
+            for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));
+              const t=pool[i];pool[i]=pool[j];pool[j]=t;}
+            for(let i=0;i<Math.min(mines,pool.length);i++){const rc=pool[i];b.cells[rc[0]][rc[1]].mine=true;}
+            for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+              let k=0; for(const nb of b.nb(r,c)) if(b.cells[nb[0]][nb[1]].mine) k++;
+              b.cells[r][c].adj=k;
+            }
+            let st=null;
+            for(let r=1;r<rows-1&&!st;r++)for(let c=1;c<cols-1&&!st;c++){
+              let ok=true;
+              for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++)
+                if(b.cells[r+dr][c+dc].mine) ok=false;
+              if(ok) st=[r,c];
+            }
+            if(!st){ continue; }
+            b.started=true; b.t0=Date.now();
+            b.reveal(st[0],st[1]);
+            let guesses=0, deduced=0;
+            const LIMIT=Math.max(4000, cols*rows*4);
+            for(let step=0; step<LIMIT; step++){
+              if(b.over) break;
+              const pl=planMoves(b, depth, 4);
+              if(!pl.moves.length){ stalled++; break; }
+              const mv=pl.moves[0];
+              if(mv.certain) deduced++; else guesses++;
+              if(applyMove(b,mv).hitMine) break;
+            }
+            if(b.win) wins++;
+            guessSum+=guesses; deduceSum+=deduced;
+          } catch(e){ errors++; }
+          if ((g+1) % 5 === 0 || g === n-1) {
+            self.postMessage({type:'progress', done:g+1, wins, guessSum, deduceSum, stalled, errors});
+          }
+        }
+        self.postMessage({type:'done', done:n, wins, guessSum, deduceSum, stalled, errors});
+      };
+    `;
+    const blob = new Blob([workerCode], {type: 'application/javascript'});
+    RUN_WORKER = new Worker(URL.createObjectURL(blob));
+
+    RUN_WORKER.onmessage = (ev) => {
+      const d = ev.data;
+      RUN.done = d.done; RUN.wins = d.wins;
+      RUN.guessSum = d.guessSum; RUN.deduceSum = d.deduceSum;
+      RUN.stalled = d.stalled; RUN.errors = d.errors;
+      updateRunKpis();
+      if (d.type === 'done') {
+        RUN_WORKER.terminate(); RUN_WORKER = null;
+        finishRun(RUN.stop ? 'stop' : 'done');
+      }
+    };
+    RUN_WORKER.onerror = (e) => {
+      RUN.errors++;
+      if (RUN_WORKER) { RUN_WORKER.terminate(); RUN_WORKER = null; }
+      finishRun('error');
+      el('runNote').textContent = '后台测试出错：' + String(e.message || e).slice(0, 140);
+    };
+    RUN_WORKER.postMessage({n: RUN.n, cols: RUN.cols, rows: RUN.rows,
+                            mines: RUN.mines, depth: 3});
+    el('runNote').textContent = '后台计算中（最快模式，不演示过程）…';
+  } catch (e) {
+    finishRun('error');
+    el('runNote').textContent = '无法启动后台测试：' + String(e && e.message || e).slice(0, 120);
+  }
+}
+
+/** 最快模式：不碰真实棋盘，纯计算一局 */
+function simulateOneFast() {
+  const savedC = COLS, savedR = ROWS, savedM = MINES;
+  COLS = RUN.cols; ROWS = RUN.rows; MINES = RUN.mines;
+  try {
+    const b = new Board();
+    b.cells = Array.from({length: ROWS}, () => Array.from({length: COLS},
+      () => ({mine: false, op: false, flag: false, adj: 0})));
+    const pool = [];
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) pool.push([r, c]);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    for (let i = 0; i < Math.min(MINES, pool.length); i++) {
+      const [r, c] = pool[i]; b.cells[r][c].mine = true;
+    }
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      let k = 0;
+      for (const [rr, cc] of b.nb(r, c)) if (b.cells[rr][cc].mine) k++;
+      b.cells[r][c].adj = k;
+    }
+    let st = null;
+    for (let r = 1; r < ROWS - 1 && !st; r++) for (let c = 1; c < COLS - 1 && !st; c++) {
+      let ok = true;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++)
+        if (b.cells[r + dr][c + dc].mine) ok = false;
+      if (ok) st = [r, c];
+    }
+    if (!st) { RUN.done++; return; }
+    b.started = true; b.t0 = Date.now();
+    b.reveal(st[0], st[1]);
+    let guesses = 0, deduced = 0;
+    const LIMIT = Math.max(4000, COLS * ROWS * 4);
+    for (let step = 0; step < LIMIT; step++) {
+      if (b.over) break;
+      const pl = planMoves(b, 3, 4);
+      if (!pl.moves.length) { RUN.stalled++; RUN.done++; return; }
+      const mv = pl.moves[0];
+      if (mv.certain) deduced++; else guesses++;
+      if (applyMove(b, mv).hitMine) break;
+    }
+    if (b.win) RUN.wins++;
+    RUN.guessSum += guesses; RUN.deduceSum += deduced;
+    RUN.done++;
+  } catch (e) { RUN.errors++; RUN.done++; }
+  finally { COLS = savedC; ROWS = savedR; MINES = savedM; }
 }
 
 /* ==========================================================================
@@ -1846,7 +2086,11 @@ el('btnReset').onclick = () => applyBoard(COLS, ROWS, MINES);
   }
   rl.value = 'default';
   el('btnRun').onclick = startRun;
-  el('btnRunStop').onclick = () => { RUN.stop = true; el('runNote').textContent = '正在停止…'; };
+  el('btnRunStop').onclick = () => {
+    RUN.stop = true;
+    if (RUN_WORKER) { RUN_WORKER.terminate(); RUN_WORKER = null; }
+    finishRun('stop');
+  };
 })();
 
 /* ---- 自定义面板 ---- */
