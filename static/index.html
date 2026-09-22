@@ -5,13 +5,29 @@
 <title>Laya 扫雷 · 再想三步，再落一子</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
+  /* 默认深色。切换 <html data-theme="light"> 即变浅色。 */
   :root{
+    --bg:#0f1218; --card:#171b24; --board:#1d222d; --line:#2b3240;
+    --fg:#e6e9f0; --dim:#8b95a8; --blue:#4a8cff; --blue2:#3a7ae8;
+    --num1:#6aa6ff; --num2:#4ecb7f; --num3:#ff6b5e; --num4:#b78cff;
+    --num5:#e0a24a; --num6:#45c8d8; --flag:#ff6b5e;
+    --raised:#2a3140; --open:#222836; --openblank:#1c2130;
+    --btn:#222836; --btnHover:#2c3543; --input:#1b2029;
+    --cellHover:#333c4d; --mineBg:#4a2622; --boomBg:#7a2f28;
+    --shadow:rgba(0,0,0,.4);
+  }
+  :root[data-theme="light"]{
     --bg:#f2f3f7; --card:#ffffff; --board:#e9ecf2; --line:#d8dce6;
     --fg:#1c2130; --dim:#6b7280; --blue:#2f6fed; --blue2:#2559c4;
     --num1:#2f6fed; --num2:#1a9e5c; --num3:#e0453a; --num4:#7b3fe4;
     --num5:#b8752a; --num6:#159ea8; --flag:#e0453a;
-    --raised:#dfe3ec; --open:#eef0f5;
+    --raised:#dfe3ec; --open:#eef0f5; --openblank:#f5f6f9;
+    --btn:#ffffff; --btnHover:#f7f8fb; --input:#ffffff;
+    --cellHover:#d3d9e6; --mineBg:#fbdcd9; --boomBg:#f4a49d;
+    --shadow:rgba(20,30,60,.05);
   }
+  html,body{background:var(--bg);color:var(--fg)}
+  body{transition:background .18s ease,color .18s ease}
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);color:var(--fg);
     font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
@@ -23,15 +39,15 @@
   .sub{color:var(--dim);font-size:13.5px}
   .ctrls{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}
   button{font:600 13.5px/1 inherit;padding:9px 16px;border-radius:9px;border:1px solid var(--line);
-    background:#fff;color:var(--fg);cursor:pointer;transition:.13s}
-  button:hover{background:#f7f8fb}
+    background:var(--btn);color:var(--fg);cursor:pointer;transition:.13s}
+  button:hover{background:var(--btnHover)}
   button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
   button.primary:hover{background:var(--blue2)}
   button:disabled{opacity:.45;cursor:not-allowed}
   .selwrap{display:flex;flex-direction:column;gap:3px;align-items:flex-end}
   .selwrap label{font-size:11px;color:var(--dim)}
   select{font:13px inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--line);
-    background:#fff;color:var(--fg)}
+    background:var(--input);color:var(--fg)}
 
   /* ---------- 数据条 ---------- */
   .stats{display:flex;align-items:center;gap:34px;margin:14px 0 16px;flex-wrap:wrap}
@@ -46,21 +62,21 @@
   .custombar.on{display:flex}
   .custombar label{display:flex;align-items:center;gap:6px;color:var(--dim)}
   .custombar input{width:76px;font:13px inherit;padding:6px 9px;border-radius:7px;
-    border:1px solid var(--line);background:#fff;color:var(--fg)}
+    border:1px solid var(--line);background:var(--input);color:var(--fg)}
   .custombar .hint{color:var(--dim);font-size:12px;flex:1;min-width:180px}
   .custombar .hint.bad{color:var(--bad)}
   .boardwrap{background:var(--card);border:1px solid var(--line);border-radius:14px;
-    padding:12px;overflow:auto;box-shadow:0 1px 3px rgba(20,30,60,.05)}
+    padding:12px;overflow:auto;box-shadow:0 1px 3px var(--shadow)}
   .board{display:grid;gap:2px;margin:0 auto;width:max-content;
     background:var(--board);padding:6px;border-radius:9px;user-select:none}
   .cell{width:var(--cw,25px);height:var(--cw,25px);border-radius:3px;display:flex;align-items:center;justify-content:center;
     font:700 var(--cf,13px)/1 ui-monospace,Consolas,monospace;cursor:pointer;transition:background .08s}
-  .cell.hid{background:var(--raised);box-shadow:inset 0 -1px 0 rgba(0,0,0,.07)}
-  .cell.hid:hover{background:#d3d9e6}
+  .cell.hid{background:var(--raised);box-shadow:inset 0 -1px 0 rgba(0,0,0,.18)}
+  .cell.hid:hover{background:var(--cellHover)}
   .cell.op{background:var(--open);cursor:default}
-  .cell.op.blank{background:#f5f6f9}
-  .cell.mine{background:#fbdcd9}
-  .cell.boom{background:#f4a49d}
+  .cell.op.blank{background:var(--openblank)}
+  .cell.mine{background:var(--mineBg)}
+  .cell.boom{background:var(--boomBg)}
   .cell.flag{color:var(--flag);font-size:14px}
   .cell.hint{outline:2px solid var(--blue);outline-offset:-2px}
   .cell.laya{outline:2px dashed #e08a2a;outline-offset:-2px}
@@ -89,12 +105,12 @@
   th,td{padding:8px 9px;text-align:left;border-bottom:1px solid var(--line)}
   th{color:var(--dim);font-weight:600;font-size:11.5px}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-  .mini{height:5px;background:#e6e9f0;border-radius:3px;overflow:hidden;min-width:56px}
+  .mini{height:5px;background:var(--line);border-radius:3px;overflow:hidden;min-width:56px}
   .mini>i{display:block;height:100%;background:#8b93a6}
   .mini>i.layai{background:#e08a2a}
   .empty{color:var(--dim);font-size:12.5px;padding:10px 0}
   .note{color:var(--dim);font-size:11.5px;line-height:1.8;margin-top:12px}
-  code{background:#eef0f5;padding:1px 5px;border-radius:4px;font-size:11.5px}
+  code{background:var(--raised);padding:1px 5px;border-radius:4px;font-size:11.5px}
 </style>
 </head>
 <body>
@@ -106,6 +122,7 @@
       <div class="sub">读懂已知数字，推演下一步。代码负责数学约束，Laya 负责判断。</div>
     </div>
     <div class="ctrls">
+      <button id="btnTheme" title="切换深色 / 浅色">🌙 深色</button>
       <button id="btnAuto" class="primary">让 Laya 来玩</button>
       <button id="btnStep">预测一步</button>
       <button id="btnReset">重新开局</button>
@@ -382,35 +399,102 @@ function components(cons) {
 }
 
 /** 完全枚举一个连通块 → 每格精确含雷概率 */
-function enumerateGroup(cons, idx, cells, cap) {
-  const cnt = new Map(cells.map(k => [k, 0]));
-  if (cells.length > cap) return {probs: null, solutions: 0};
-  let solutions = 0;
+function enumerateGroup(cons, idx, cells, cap, nodeBudget, deadline) {
   const n = cells.length;
+  if (!n) return {probs: null, solutions: 0, hist: null, perCell: null};
+  if (n > cap) return {probs: null, solutions: 0, hist: null, perCell: null};
+
   const pos = new Map(cells.map((k, i) => [k, i]));
-  const sub = idx.map(i => ({bits: cons[i].cells.map(k => pos.get(k)), need: cons[i].mines}));
-  const total = 1 << n;
-  for (let mask = 0; mask < total; mask++) {
-    let ok = true;
-    for (const s of sub) {
-      let m = 0;
-      for (const b of s.bits) if (mask & (1 << b)) m++;
-      if (m !== s.need) { ok = false; break; }
+
+  // 只有约束的**全部**格子都在本块内时才可用。
+  // 若过滤掉块外的格子，need 不变而候选格变少 —— 约束被削弱，
+  // 会把"不确定"误判成"必然是雷"（实测在专家难度上会错格子）。
+  const sub = [];
+  for (const i of idx) {
+    const bits = [];
+    let complete = true;
+    for (const k of cons[i].cells) {
+      const v = pos.get(k);
+      if (v === undefined) { complete = false; break; }
+      bits.push(v);
     }
-    if (!ok) continue;
-    solutions++;
-    for (let i = 0; i < n; i++) if (mask & (1 << i)) cnt.set(cells[i], cnt.get(cells[i]) + 1);
+    if (complete && bits.length) sub.push({bits, need: cons[i].mines});
   }
-  if (!solutions) return {probs: null, solutions: 0};
+  if (!sub.length) return {probs: null, solutions: 0, hist: null, perCell: null};
+
+  // 每个格子被哪些约束涉及 —— 用于增量剪枝
+  const watch = Array.from({length: n}, () => []);
+  sub.forEach((sv, si) => { for (const b of sv.bits) watch[b].push(si); });
+
+  const assign = new Int8Array(n).fill(-1);
+  const siMines = new Int32Array(sub.length);
+  const siUnset = new Int32Array(sub.length);
+  sub.forEach((sv, si) => { siUnset[si] = sv.bits.length; });
+
+  const hist = new Map();                       // 本块总雷数 -> 方案数
+  const countByM = cells.map(() => new Map());  // 每格：总雷数 -> 是雷的方案数
+  let solutions = 0, nodes = 0, blown = false;
+  const budget = nodeBudget || 3e5;
+  // 每 8192 个节点查一次时间。只在块与块之间查是不够的 ——
+  // 单个大块就能跑掉好几秒，游戏会直接卡死。
+  const CHECK_EVERY = 8192;
+
+  function feasible(si) {
+    const sv = sub[si], left = siUnset[si], got = siMines[si];
+    return got <= sv.need && got + left >= sv.need;
+  }
+
+  function dfs(i, placed) {
+    if (blown) return;
+    if (++nodes > budget) { blown = true; return; }
+    if ((nodes % CHECK_EVERY) === 0 && deadline && performance.now() > deadline) {
+      blown = true; return;
+    }
+    if (i === n) {
+      for (let si = 0; si < sub.length; si++) if (siMines[si] !== sub[si].need) return;
+      solutions++;
+      hist.set(placed, (hist.get(placed) || 0) + 1);
+      for (let k = 0; k < n; k++) {
+        if (assign[k] === 1) {
+          const mp = countByM[k];
+          mp.set(placed, (mp.get(placed) || 0) + 1);
+        }
+      }
+      return;
+    }
+    for (const val of [0, 1]) {
+      assign[i] = val;
+      let ok = true;
+      for (const si of watch[i]) {
+        if (val === 1) siMines[si]++;
+        siUnset[si]--;
+        if (!feasible(si)) ok = false;
+      }
+      if (ok) dfs(i + 1, placed + val);
+      for (const si of watch[i]) {
+        if (val === 1) siMines[si]--;
+        siUnset[si]++;
+      }
+      assign[i] = -1;
+      if (blown) return;
+    }
+  }
+  dfs(0, 0);
+
+  if (blown || !solutions) return {probs: null, solutions: 0, hist: null, perCell: null};
+
   const probs = new Map();
-  for (const k of cells) probs.set(k, cnt.get(k) / solutions);
-  return {probs, solutions};
+  for (let k = 0; k < n; k++) {
+    let hit = 0;
+    for (const c of countByM[k].values()) hit += c;
+    const val = solutions > 0 ? hit / solutions : NaN;
+    if (Number.isFinite(val)) probs.set(cells[k], val);
+  }
+  const perCell = new Map();
+  cells.forEach((k, i) => perCell.set(k, countByM[i]));
+  return {probs, solutions, hist, perCell};
 }
 
-/**
- * 求解：返回 {safe, mines, probs, cons, groups, enumCells}
- *   probs: Map(cellKey → 精确含雷概率)  —— 只有被枚举覆盖到的格子才有
- */
 function solve(b, depth) {
   const built = buildConstraints(b);
   if (built.error) return {error: built.error};
@@ -420,34 +504,46 @@ function solve(b, depth) {
   const markSafe = k => { if (!safe.has(k)) { safe.add(k); return true; } return false; };
   const markMine = k => { if (!mines.has(k)) { mines.add(k); return true; } return false; };
 
-  // --- 规则 1/2/3 迭代 depth 轮 ---
-  for (let round = 0; round < Math.max(1, depth); round++) {
-    let changed = false;
-
-    // 先吸收上一轮已确定的结果，再推导
-    cons = cons.map(k => {
+  // ==========================================================================
+  // 阶段一：局部约束传播
+  //   规则 1/2  单格：need==0 → 全安全；need==len → 全是雷
+  //   规则 3    子集：A ⊂ B 且 A 需 a 颗、B 需 b 颗 → B\A 需 b-a 颗
+  // ==========================================================================
+  function reduce() {
+    return cons.map(k => {
       const cells = k.cells.filter(x => !safe.has(x) && !mines.has(x));
       const dec = k.cells.filter(x => mines.has(x)).length;
       return {cells, mines: k.mines - dec, from: k.from};
     }).filter(k => k.cells.length > 0);
+  }
+
+  for (let round = 0; round < Math.max(1, depth); round++) {
+    let changed = false;
+    cons = reduce();
 
     for (const k of cons) {
       if (k.mines === 0) { for (const x of k.cells) if (markSafe(x)) changed = true; }
       else if (k.mines === k.cells.length) { for (const x of k.cells) if (markMine(x)) changed = true; }
     }
+    if (changed) cons = reduce();
 
-    // 子集推导
+    // 子集推导（A⊂B 与 B⊂A 都查）
     for (let i = 0; i < cons.length; i++) {
       const A = cons[i];
       if (!A.cells.length) continue;
+      const sa = new Set(A.cells);
       for (let j = 0; j < cons.length; j++) {
         if (i === j) continue;
         const B = cons[j];
-        const sa = new Set(A.cells);
-        if (B.cells.length <= A.cells.length) continue;
-        if (!A.cells.every(x => B.cells.includes(x))) continue;
-        const rest = B.cells.filter(x => !sa.has(x));
-        const need = B.mines - A.mines;
+        let small = A, big = B;
+        if (B.cells.length < A.cells.length) { small = B; big = A; }
+        if (small.cells.length === big.cells.length) continue;
+        const setBig = (big === A) ? sa : new Set(B.cells);
+        if (!small.cells.every(x => setBig.has(x))) continue;
+        const setSmall = new Set(small.cells);
+        const rest = big.cells.filter(x => !setSmall.has(x));
+        const need = big.mines - small.mines;
+        if (need < 0 || need > rest.length) continue;
         if (need === 0) { for (const x of rest) if (markSafe(x)) changed = true; }
         else if (need === rest.length) { for (const x of rest) if (markMine(x)) changed = true; }
       }
@@ -455,46 +551,207 @@ function solve(b, depth) {
     if (!changed) break;
   }
 
-  // --- 规则 4：对剩余约束做完全枚举 ---
-  const rest = cons.map(k => {
-    const cells = k.cells.filter(x => !safe.has(x) && !mines.has(x));
-    const dec = k.cells.filter(x => mines.has(x)).length;
-    return {cells, mines: k.mines - dec, from: k.from};
-  }).filter(k => k.cells.length > 0);
+  cons = reduce();
 
+  // ==========================================================================
+  // 阶段二：按连通块做 DFS 剪枝完全枚举
+  //
+  // 关键点：
+  //   1. 约束必须**完整**落在块内才参与枚举（见 enumerateGroup 内注释）。
+  //   2. cap 只是防退化的第一道闸；真正的保护是节点预算 + deadline。
+  //   3. 只有「全部块都精确枚举成功」时才做全局 DP。若某块走了 splitGroup
+  //      降级，子块之间会互相重叠、独立性被破坏，DP 前提不成立 ——
+  //      强行使用会算出错误概率（实测在地狱难度上把安全格判成"必然是雷"）。
+  // ==========================================================================
   const probs = new Map();
-  const groups = components(rest);
-  const cap = depth >= 4 ? 20 : (depth >= 3 ? 16 : 12);
-  let enumCells = 0, solutions = 0, tooBig = 0;
+  const groups = components(cons);
+  const CAP = 64;
+  const budgetFor = n => Math.min(4e5, Math.max(3e4, n * n * 400));
+  // 全局时间闸：deadline 会传进 DFS 内部，因此单个大块也无法超时
+  const SOLVE_BUDGET_MS = 700;
+  const deadline = performance.now() + SOLVE_BUDGET_MS;
+
+  let enumCells = 0, solutions = 0, tooBig = 0, exactAll = true;
+  const solved = [];
+  const localProbs = new Map();
+
   for (const g of groups) {
-    const r = enumerateGroup(rest, g.idx, g.cells, cap);
-    if (r.probs) {
-      for (const [k, p] of r.probs) probs.set(k, p);
-      enumCells += g.cells.length; solutions += r.solutions;
-    } else {
-      // 连通块超过枚举上限（大棋盘上很常见：多数约束会连成一整块）。
-      // 这时不要整块放弃 —— 改为按约束拆成更小的子块，能算多少算多少。
+    if (performance.now() > deadline) { exactAll = false; tooBig++; continue; }
+    const r = enumerateGroup(cons, g.idx, g.cells, CAP, budgetFor(g.cells.length), deadline);
+    if (!r.probs) {
       tooBig++;
-      for (const sub of splitGroup(rest, g)) {
-        const rr = enumerateGroup(rest, sub.idx, sub.cells, cap);
+      exactAll = false;                     // 降级 → 放弃全局 DP
+      // 拆子块，能精确多少算多少（只进局部概率，不参与全局加权）
+      for (const sub of splitGroup(cons, g, 22)) {
+        if (performance.now() > deadline + 300) break;
+        const rr = enumerateGroup(cons, sub.idx, sub.cells, 22, budgetFor(sub.cells.length), deadline + 300);
         if (rr.probs) {
-          for (const [k, p] of rr.probs) probs.set(k, p);
+          for (const [k, p] of rr.probs) localProbs.set(k, p);
           enumCells += sub.cells.length; solutions += rr.solutions;
         }
       }
+      continue;
+    }
+    for (const [k, p] of r.probs) localProbs.set(k, p);
+    enumCells += g.cells.length; solutions += r.solutions;
+    solved.push({hist: r.hist, perCell: r.perCell, cells: g.cells});
+  }
+  for (const [k, p] of localProbs) probs.set(k, p);
+
+  // ==========================================================================
+  // 阶段三：全局雷数约束（仅在块之间真正独立时启用）
+  //
+  // 用 DP 统计「所有块 + 自由格的总雷数 == 剩余雷数」的组合，
+  // 再据此重算每格边际概率。这是原先完全没用上的信息，
+  // 也是"少猜"的关键来源。
+  // ==========================================================================
+  const totalHidden = countHidden(b);
+  const minesLeft = MINES - b.flags;
+  let globalWeight = 0;
+
+  if (exactAll && solved.length) {
+    const gi = combineGlobally(solved, totalHidden, minesLeft);
+    if (gi) {
+      globalWeight = gi.weight;
+      for (const [k, p] of gi.probs) probs.set(k, p);   // 全局约束更强，覆盖局部
+      // 把全局证明出的"必然"提升为确定结论，否则会白白去猜
+      for (const k of gi.certainSafe) markSafe(k);
+      for (const k of gi.certainMine) markMine(k);
     }
   }
+
   for (const k of safe) probs.set(k, 0);
   for (const k of mines) probs.set(k, 1);
 
-  return {safe, mines, probs, cons: rest, groups, enumCells, solutions, tooBig};
+  // 最后兜底清洗：任何非有限概率都删掉，让调用方走密度估计。
+  // 不做这一步会在界面上显示 "P(雷) NaN%"。
+  for (const [k, v] of [...probs]) if (!Number.isFinite(v)) probs.delete(k);
+
+  return {safe, mines, probs, cons, groups, enumCells, solutions, tooBig,
+          exactAll, totalHidden, minesLeft, globalWeight};
 }
 
-/** 把一个过大的连通块拆成若干小独立块。
- * 做法：以每个约束为中心做种子扩张，扩张到超过上限就开新块。
- * 拆出来的子块之间可能有重叠格（那格的概率取先算出来的），
- * 但每块内部是**精确**的 —— 比整块放弃、什么概率都不给要好得多。 */
+/** 未揭开且未插旗的格数 */
+function countHidden(b) {
+  let n = 0;
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const x = b.cells[r][c];
+    if (!x.op && !x.flag) n++;
+  }
+  return n;
+}
+
+/**
+ * 全局雷数约束：把各**独立**块的方案按「总雷数 == 剩余雷数」加权组合。
+ *
+ * solved: [{hist: Map(雷数→方案数), perCell: Map(格→Map(雷数→是雷方案数))}]
+ * 返回 {probs, weight, certainSafe, certainMine}；数据不足时返回 null。
+ */
+function combineGlobally(solved, totalHidden, minesLeft) {
+  if (minesLeft < 0 || !solved.length) return null;
+
+  let touched = 0;
+  for (const b of solved) touched += b.perCell.size;
+  const freeCells = Math.max(0, totalHidden - touched);
+  const maxM = minesLeft;
+  const K = solved.length;
+
+  // 前缀 / 后缀卷积：pre[b] = 前 b 块凑出 j 颗雷的方案数
+  const conv = (cur, h) => {
+    const nf = new Float64Array(maxM + 1);
+    for (let j = 0; j <= maxM; j++) {
+      if (!cur[j]) continue;
+      for (const [m, c] of h) if (j + m <= maxM) nf[j + m] += cur[j] * c;
+    }
+    return nf;
+  };
+  const pre = [], suf = [];
+  {
+    let cur = new Float64Array(maxM + 1); cur[0] = 1;
+    for (let b = 0; b < K; b++) { pre.push(cur); cur = conv(cur, solved[b].hist); }
+  }
+  {
+    let cur = new Float64Array(maxM + 1); cur[0] = 1;
+    for (let b = K - 1; b >= 0; b--) { suf.unshift(cur); cur = conv(cur, solved[b].hist); }
+  }
+
+  const probs = new Map();
+  const certainSafe = new Set(), certainMine = new Set();
+  let Z = 0;
+
+  for (let b = 0; b < K; b++) {
+    const bl = solved[b];
+
+    // 其余块凑出 s 颗雷的权重
+    const others = new Float64Array(maxM + 1);
+    for (let j = 0; j <= maxM; j++) {
+      if (!pre[b][j]) continue;
+      for (let k2 = 0; j + k2 <= maxM; k2++) {
+        const v = pre[b][j] * suf[b][k2];
+        if (v) others[j + k2] += v;
+      }
+    }
+
+    // 本块取 m 颗雷时，剩余 (minesLeft - s - m) 由自由格承担
+    // wByM[m] = Σ_s others[s] * C(freeCells, minesLeft - s - m)
+    const wByM = new Float64Array(maxM + 1);
+    for (let m = 0; m <= maxM; m++) {
+      let w = 0;
+      for (let s2 = 0; s2 + m <= maxM; s2++) {
+        if (!others[s2]) continue;
+        const needFree = minesLeft - s2 - m;
+        if (needFree < 0 || needFree > freeCells) continue;
+        w += others[s2] * binom(freeCells, needFree);
+      }
+      wByM[m] = w;
+    }
+
+    // 分母必须是 Σ_m hist[m] * wByM[m]。
+    // 早先写成 histSum * Σ_m wByM[m] 是错的：wByM 随 m 变化时会把概率
+    // 错算成 1，实测在地狱难度上把安全格判成"必然是雷"。
+    let denom = 0;
+    for (const [m, c] of bl.hist) denom += c * wByM[m];
+    if (!(denom > 0)) continue;
+    Z += denom;
+
+    for (const [cell, perM] of bl.perCell) {
+      let num = 0;
+      for (const [m, c] of perM) num += c * wByM[m];
+      const val = num / denom;
+      // denom 为 0 或数值退化时会得到 NaN；直接丢弃这一格的概率，
+      // 由调用方回退到全局密度估计（否则界面会显示 "P(雷) NaN%"）。
+      if (Number.isFinite(val)) probs.set(cell, Math.max(0, Math.min(1, val)));
+
+      // 用**精确整数条件**判定"必然"，不做浮点相等比较：
+      //   wByM[m] 为 0 表示本块取 m 颗雷时剩余雷数凑不出来，该 m 全局不可行
+      let neverMine = true, alwaysMine = true;
+      for (const [m, c] of bl.hist) {
+        if (!(wByM[m] > 0)) continue;
+        const hit = perM.get(m) || 0;
+        if (hit > 0) neverMine = false;
+        if (hit < c) alwaysMine = false;
+        if (!neverMine && !alwaysMine) break;
+      }
+      if (neverMine) certainSafe.add(cell);
+      else if (alwaysMine) certainMine.add(cell);
+    }
+  }
+
+  return probs.size ? {probs, weight: Z, certainSafe, certainMine} : null;
+}
+
+/** 二项式系数 C(n,k)，用乘法避免阶乘溢出 */
+function binom(n, k) {
+  if (k < 0 || k > n) return 0;
+  k = Math.min(k, n - k);
+  let r = 1;
+  for (let i = 1; i <= k; i++) r = r * (n - k + i) / i;
+  return r;
+}
+
+/** 把一个过大的连通块拆成若干小独立块（枚举不了时的降级路径） */
 function splitGroup(cons, g, cap) {
+  cap = cap || 26;
   const out = [];
   const used = new Set();
   for (const i of g.idx) {
@@ -504,7 +761,6 @@ function splitGroup(cons, g, cap) {
     while (q.length) {
       const k = q.pop(); idx.push(k);
       for (const c of cons[k].cells) cells.add(c);
-      // 只有加上新约束后仍在上限内，才继续吸收邻居
       const merged = new Set(cells);
       for (const j of g.idx) {
         if (used.has(j)) continue;
@@ -833,7 +1089,10 @@ async function doStep(useLaya) {
 
     // 数学真值：能枚举到的格用精确概率，其余用「剩余雷数 / 剩余格数」做全局估计
     const globalP = estimateGlobal(board);
-    const solverP = new Map(keys.map(k => [k, sol.probs.has(k) ? sol.probs.get(k) : globalP]));
+    const solverP = new Map(keys.map(k => {
+      const v = sol.probs.get(k);
+      return [k, Number.isFinite(v) ? v : globalP];
+    }));
 
     let layaRes = null, err = null;
     if (useLaya) {
@@ -881,7 +1140,9 @@ async function doStep(useLaya) {
     }
     paint();
 
-    let msg = `数学定不了 → 猜。最低概率格 <b>R${pr + 1}C${pc + 1}</b>（P(雷) ${(100 * solverP.get(pick)).toFixed(1)}%）`;
+    const pickP = solverP.get(pick);
+    const pickTxt = Number.isFinite(pickP) ? (100 * pickP).toFixed(1) + '%' : '未知';
+    let msg = `数学定不了 → 猜。最低概率格 <b>R${pr + 1}C${pc + 1}</b>（P(雷) ${pickTxt}）`;
     if (layaBest) {
       const [lr, lc] = key2rc(layaBest);
       msg += `；Laya 认为是 R${lr + 1}C${lc + 1}`
@@ -1012,6 +1273,31 @@ el('cApply').onclick = () => {
 
 /* 计时器 */
 setInterval(() => { if (board.started && !board.over) el('sTime').textContent = fmt(board.elapsedMs()); }, 500);
+
+/* ==========================================================================
+ * 主题切换：默认深色，选择记在 localStorage
+ * ======================================================================== */
+(function initTheme() {
+  const saved = (() => { try { return localStorage.getItem('laya-ms-theme'); } catch (e) { return null; } })();
+  const theme = saved === 'light' ? 'light' : 'dark';        // 默认深色
+  applyTheme(theme);
+
+  function applyTheme(t) {
+    if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    else document.documentElement.removeAttribute('data-theme');
+    const b = el('btnTheme');
+    if (b) b.textContent = t === 'light' ? '☀️ 浅色' : '🌙 深色';
+    try { localStorage.setItem('laya-ms-theme', t); } catch (e) {}
+  }
+  window.__toggleTheme = () => {
+    const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    applyTheme(cur === 'light' ? 'dark' : 'light');
+  };
+  const b = el('btnTheme');
+  if (b) b.onclick = window.__toggleTheme;
+  // 不加「跟随系统」：需求是默认深色，跟随系统会让浅色系统的用户
+  // 一进来就是浅色，与"默认深色"矛盾。只有用户手动切过才改变。
+})();
 
 /* 窗口尺寸变化时重算格子大小（否则大棋盘在窄窗口里会溢出） */
 let _rsz = null;
