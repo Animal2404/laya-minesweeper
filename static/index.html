@@ -454,7 +454,7 @@ function components(cons) {
 }
 
 /** 完全枚举一个连通块 → 每格精确含雷概率 */
-function enumerateGroup(cons, idx, cells, cap, nodeBudget, deadline) {
+function enumerateGroup(cons, idx, cells, cap, nodeBudget, deadline, mLo, mHi) {
   const n = cells.length;
   if (!n) return {probs: null, solutions: 0, hist: null, perCell: null};
   if (n > cap) return {probs: null, solutions: 0, hist: null, perCell: null};
@@ -489,6 +489,13 @@ function enumerateGroup(cons, idx, cells, cap, nodeBudget, deadline) {
   const hist = new Map();                       // 本块总雷数 -> 方案数
   const countByM = cells.map(() => new Map());  // 每格：总雷数 -> 是雷的方案数
   let solutions = 0, nodes = 0, blown = false;
+
+  // 全局雷数约束窗口：本块放下的雷数必须落在 [mLo, mHi]。
+  // 这是原先把概率算错的原因 —— 只用局部约束枚举会多算方案，
+  // 例如真值 100% 是雷的格子被算成 55.6%。参考实现
+  // （aijobclub/minesweeper-solver）也特别指出"多数求解器把全局雷数做错"。
+  const lo = (mLo === undefined || mLo === null) ? -Infinity : mLo;
+  const hi = (mHi === undefined || mHi === null) ? Infinity : mHi;
   const budget = nodeBudget || 3e5;
   // 每 8192 个节点查一次时间。只在块与块之间查是不够的 ——
   // 单个大块就能跑掉好几秒，游戏会直接卡死。
@@ -501,11 +508,14 @@ function enumerateGroup(cons, idx, cells, cap, nodeBudget, deadline) {
 
   function dfs(i, placed) {
     if (blown) return;
+    if (placed > hi) return;                       // 已超上限，剪枝
+    if (i === n && placed < lo) return;            // 不足下限
     if (++nodes > budget) { blown = true; return; }
     if ((nodes % CHECK_EVERY) === 0 && deadline && performance.now() > deadline) {
       blown = true; return;
     }
     if (i === n) {
+      if (placed < lo || placed > hi) return;
       for (let si = 0; si < sub.length; si++) if (siMines[si] !== sub[si].need) return;
       solutions++;
       hist.set(placed, (hist.get(placed) || 0) + 1);
@@ -626,31 +636,67 @@ function solve(b, depth) {
   const SOLVE_BUDGET_MS = 700;
   const deadline = performance.now() + SOLVE_BUDGET_MS;
 
+  // 全局量：阶段二算"每块可行雷数窗口"时就要用，必须在前面声明
+  const totalHidden = countHidden(b);
+  const minesLeft = MINES - b.flags;
+
   let enumCells = 0, solutions = 0, tooBig = 0, exactAll = true;
   const solved = [];
   const localProbs = new Map();
 
-  for (const g of groups) {
-    if (performance.now() > deadline) { exactAll = false; tooBig++; continue; }
-    const r = enumerateGroup(cons, g.idx, g.cells, CAP, budgetFor(g.cells.length), deadline);
-    if (!r.probs) {
-      tooBig++;
-      exactAll = false;                     // 降级 → 放弃全局 DP
-      // 拆子块，能精确多少算多少（只进局部概率，不参与全局加权）
-      for (const sub of splitGroup(cons, g, 22)) {
-        if (performance.now() > deadline + 300) break;
-        const rr = enumerateGroup(cons, sub.idx, sub.cells, 22, budgetFor(sub.cells.length), deadline + 300);
-        if (rr.probs) {
-          for (const [k, p] of rr.probs) localProbs.set(k, p);
-          enumCells += sub.cells.length; solutions += rr.solutions;
+  // ==========================================================================
+  // 把所有连通块**联合**枚举，一次性施加全局雷数约束。
+  //
+  // 为什么不再逐块算"窗口"：逐块枚举时每块只知道自己的雷数分布，
+  // 必须靠其它块的 [lo,hi] 反推窗口；这个反推一旦有落差（例如某块枚举
+  // 被预算截断），窗口就会算错，概率随之偏掉 —— 实测 7x7 棋盘上与
+  // 暴力真值差 44%（真值 100% 是雷的格子被算成 55.6%）。
+  //
+  // 联合枚举没有这个问题：所有约束 + 全局雷数一起进 DFS，
+  // 只有真正自洽的配置才被计入分母。参考实现
+  // （github.com/aijobclub/minesweeper-solver）也是这个思路。
+  // ==========================================================================
+  const allCells = [];
+  const allIdx = [];
+  for (const g of groups) { allIdx.push(...g.idx); for (const k of g.cells) allCells.push(k); }
+  const touched = allCells.length;
+  const freeCells = Math.max(0, totalHidden - touched);
+
+  // 自由格承担剩余雷数；块内雷数因此落在 [minesLeft - freeCells, minesLeft]
+  // 若块内格子数超过 cap，则退化为"逐块独立枚举 + 全局 DP 近似"
+  let joint = null;
+  if (allCells.length && allCells.length <= CAP) {
+    joint = enumerateGroup(cons, allIdx, allCells, CAP,
+                           budgetFor(allCells.length) * 2, deadline,
+                           Math.max(0, minesLeft - freeCells), minesLeft);
+  }
+
+  if (joint && joint.probs) {
+    for (const [k, p] of joint.probs) localProbs.set(k, p);
+    enumCells += allCells.length;
+    solutions += joint.solutions;
+    solved.push({hist: joint.hist, perCell: joint.perCell, cells: allCells});
+  } else {
+    if (allCells.length > CAP) tooBig++;
+    exactAll = false;
+    // 降级：逐块独立枚举（不考虑全局雷数），只求给部分格子一个近似值
+    for (const g of groups) {
+      if (performance.now() > deadline) break;
+      const r = enumerateGroup(cons, g.idx, g.cells, CAP, budgetFor(g.cells.length), deadline);
+      if (r.probs) {
+        for (const [k, p] of r.probs) localProbs.set(k, p);
+        enumCells += g.cells.length; solutions += r.solutions;
+        solved.push({hist: r.hist, perCell: r.perCell, cells: g.cells});
+      } else {
+        for (const sub of splitGroup(cons, g, 22)) {
+          if (performance.now() > deadline + 300) break;
+          const rr = enumerateGroup(cons, sub.idx, sub.cells, 22, budgetFor(sub.cells.length), deadline + 300);
+          if (rr.probs) for (const [k, p] of rr.probs) localProbs.set(k, p);
         }
       }
-      continue;
     }
-    for (const [k, p] of r.probs) localProbs.set(k, p);
-    enumCells += g.cells.length; solutions += r.solutions;
-    solved.push({hist: r.hist, perCell: r.perCell, cells: g.cells});
   }
+
   for (const [k, p] of localProbs) probs.set(k, p);
 
   // ==========================================================================
@@ -660,29 +706,51 @@ function solve(b, depth) {
   // 再据此重算每格边际概率。这是原先完全没用上的信息，
   // 也是"少猜"的关键来源。
   // ==========================================================================
-  const totalHidden = countHidden(b);
-  const minesLeft = MINES - b.flags;
   let globalWeight = 0;
 
-  if (exactAll && solved.length) {
-    const gi = combineGlobally(solved, totalHidden, minesLeft);
-    if (gi) {
-      globalWeight = gi.weight;
-      for (const [k, p] of gi.probs) probs.set(k, p);   // 全局约束更强，覆盖局部
-      // 把全局证明出的"必然"提升为确定结论，否则会白白去猜
-      for (const k of gi.certainSafe) markSafe(k);
-      for (const k of gi.certainMine) markMine(k);
-
-      // 未被任何约束覆盖的自由格：用全局 DP 推出的概率填上。
-      // 不做这一步，高密度盘面上绝大多数格子就没有精确概率，
-      // 猜测只能退回粗略的密度估计（实测地狱难度覆盖率仅 1.3%）。
-      if (Number.isFinite(gi.freeP)) {
+  // 阶段二的每块概率已经**带全局雷数窗口**枚举过了，它就是全局一致的结果，
+  // 不需要再让 combineGlobally 覆盖一遍。
+  //
+  // 早先这里会覆盖，而 combineGlobally 用的是自己那套 DP，分母口径与阶段二不同，
+  // 结果把正确的概率改错 —— 实测 7x7 棋盘上与暴力真值差 44%
+  // （真值 100% 是雷的格子被算成 55.6%）。
+  //
+  // 现在阶段三只做一件仍有价值的事：给「未被任何约束覆盖的自由格」补概率。
+  // 自由格互相等价，期望雷数 / 自由格数 就是它的精确概率。
+  const touched3 = solved.reduce((acc, x) => acc + x.cells.length, 0);
+  const free3 = Math.max(0, totalHidden - touched3);
+  if (free3 > 0 && solved.length) {
+    // 由各块的雷数分布推出"自由格承担多少雷"
+    let wsum = 0, wmine = 0;
+    const dist = new Map([[0, 1]]);
+    for (const bl of solved) {
+      const nd = new Map();
+      for (const [a, ca] of dist) {
+        for (const [m, cm] of bl.hist) {
+          const key = a + m;
+          nd.set(key, (nd.get(key) || 0) + ca * cm);
+        }
+      }
+      dist.clear();
+      for (const [k2, v] of nd) dist.set(k2, v);
+    }
+    for (const [m, c] of dist) {
+      // 落在自由格上的雷数 = minesLeft - m，必须合法
+      const needFree = minesLeft - m;
+      if (needFree < 0 || needFree > free3) continue;
+      const w = c * binom(free3, needFree);
+      if (Number.isFinite(w) && w > 0) { wsum += w; wmine += w * needFree; }
+    }
+    if (wsum > 0) {
+      const fp = wmine / (wsum * free3);
+      if (Number.isFinite(fp)) {
         for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
           const x = b.cells[r][c];
           if (x.op || x.flag) continue;
           const k = r + ',' + c;
-          if (!probs.has(k)) probs.set(k, gi.freeP);
+          if (!probs.has(k)) probs.set(k, fp);
         }
+        globalWeight = wsum;
       }
     }
   }
