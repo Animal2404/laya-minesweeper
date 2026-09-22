@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import urllib.request
 import os
 import sys
 import threading
@@ -109,6 +110,96 @@ def warmup():
         log("[laya] warmup 失败（不影响使用）: %s" % e)
 
 
+# ---------------------------------------------------------------------------
+# Jev（System One 云端模型，可选）
+#
+# 与 Laya 一样是"结构化决策"模型：给一段 state + 若干问题，直接返回
+# 概率/置信度，不生成文本。通过环境变量配置，未配置时该项在界面上不可选。
+#   JEV_API_KEY   必填，没有就不注册这个后端
+#   JEV_BASE_URL  默认 https://omnilabs.vibeadmin.cn/v1
+#   JEV_MODEL     默认 jev-latest
+# ---------------------------------------------------------------------------
+JEV_KEY = os.environ.get("JEV_API_KEY", "").strip()
+JEV_BASE = os.environ.get("JEV_BASE_URL", "https://omnilabs.vibeadmin.cn/v1").rstrip("/")
+JEV_MODEL = os.environ.get("JEV_MODEL", "jev-latest")
+
+
+def _jev_post(path: str, body: dict, timeout=90):
+    """调 Jev。网络不稳，带重试。"""
+    import ssl
+    ctx = ssl.create_default_context()
+    try:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    except Exception:
+        pass
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    last = None
+    for i in range(3):
+        try:
+            req = urllib.request.Request(
+                JEV_BASE + path, data=data,
+                headers={"Authorization": "Bearer " + JEV_KEY,
+                         "Content-Type": "application/json"},
+                method="POST")
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except Exception as e:
+            last = e
+            time.sleep(1.5 * (i + 1))
+    raise RuntimeError("Jev 调用失败: %s" % last)
+
+
+def predict_jev(payload: dict) -> dict:
+    """把同样的 state/questions 转发给 Jev，并归一化成与 Laya 一致的返回结构。"""
+    if not JEV_KEY:
+        raise RuntimeError("未配置 JEV_API_KEY")
+    state = payload.get("state")
+    questions = payload.get("questions")
+    if state in (None, "", {}, []):
+        raise ValueError("state 不能为空")
+    if not isinstance(questions, dict) or not questions:
+        raise ValueError("questions 必须是非空对象")
+
+    t0 = time.perf_counter()
+    # Jev 的 System One 端点：POST /v1/systemone
+    body = {"model": JEV_MODEL, "state": state, "questions": questions}
+    try:
+        res = _jev_post("/systemone", body)
+    except Exception:
+        # 端点名可能不同，退回 chat/completions（让服务端自己解析结构化问题）
+        res = _jev_post("/chat/completions", {
+            "model": JEV_MODEL,
+            "messages": [{"role": "user", "content":
+                          json.dumps({"state": state, "questions": questions},
+                                     ensure_ascii=False)}],
+            "response_format": {"type": "json_object"},
+        })
+    ms = (time.perf_counter() - t0) * 1000
+
+    # 归一化：接受 {answers:{...}} / {choices:{...}} / 直接 {qid:...} 三种形态
+    ans = res.get("answers") or res.get("choices") or res
+    if isinstance(ans, list):                       # OpenAI 风格
+        try:
+            ans = json.loads(ans[0]["message"]["content"])
+            ans = ans.get("answers") or ans
+        except Exception:
+            ans = {}
+    out = {}
+    for qid, q in questions.items():
+        a = ans.get(qid) if isinstance(ans, dict) else None
+        if isinstance(a, dict):
+            out[qid] = a
+        elif isinstance(a, (int, float)) and q.get("type") == "noul":
+            out[qid] = {"noul": float(a)}
+        elif isinstance(a, str) and q.get("type") == "choice":
+            out[qid] = {"choice": a, "confidence": 1.0}
+        else:
+            out[qid] = {"noul": 0.5} if q.get("type") == "noul" else {"choice": None}
+    return {"answers": out, "latency_ms": round(ms, 1),
+            "device": "cloud", "routing": {"model": JEV_MODEL, "backend": "jev"}}
+
+
 def predict(payload: dict) -> dict:
     state = payload.get("state")
     questions = payload.get("questions")
@@ -118,6 +209,10 @@ def predict(payload: dict) -> dict:
         raise ValueError("questions 必须是非空对象")
     if len(json.dumps(questions, ensure_ascii=False)) > 200000:
         raise ValueError("questions 太大")
+
+    want = str(payload.get("backend") or payload.get("model") or "").lower()
+    if want in ("jev", "jev-latest") or want.startswith("jev"):
+        return predict_jev(payload)
 
     agent = AGENT
     if agent is None:
@@ -175,6 +270,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"error": "static/index.html 缺失"})
         if path == "/api/health":
             return self._send(200, STATUS)
+        if path == "/api/models":
+            ms = [{"id": "laya", "label": "Laya（本地 %s）" % STATUS.get("model", ""),
+                   "ready": STATUS.get("state") == "ready", "where": "本地 GPU"}]
+            ms.append({"id": "jev", "label": "Jev（云端 %s）" % JEV_MODEL,
+                       "ready": bool(JEV_KEY), "where": "云端",
+                       "hint": "" if JEV_KEY else "未配置 JEV_API_KEY"})
+            return self._send(200, {"models": ms, "default": "laya"})
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):

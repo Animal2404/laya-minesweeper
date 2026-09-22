@@ -1,0 +1,36 @@
+============================================================
+   Laya Minesweeper  +  Jev (cloud)
+============================================================
+
+   Local model : Laya  (GPU, ~0.1s per call)
+   Cloud model : Jev   (internet, ~10s per call)
+
+   Switch between them with the [model] dropdown
+   at the top of the page.
+
+   First run downloads model weights (~650 MB).
+   Startup takes about 15-30 seconds.
+
+============================================================
+
+   Python : E:\DeepSeek\laya-local\.venv\Scripts\python.exe
+
+   Checking Jev endpoint ...
+   [WARN] Jev endpoint unreachable right now.
+          The page still starts; Jev shows as unavailable
+          and the page falls back to Laya automatically.
+          This is usually a temporary network issue.
+
+   Starting server on port 8080 ...
+
+   Model dir: E:\DeepSeek\laya-local\models\laya
+Laya Minesweeper
+  模型     : E:\DeepSeek\laya-local\models\laya
+  设备     : 自动 (cuda → mps → cpu)
+E:\DeepSeek\laya-local\.venv\Lib\site-packages\laya\agent.py:385: RuntimeWarning: laya: this checkpoint ships temperatures outside [0.5, 5] which would distort confidence; clamping choice:11+=0.1006. Treat confidence from the affected buckets as uncalibrated.
+  return Agent(model_id_or_path, device=device, token=token, subfolder=subfolder)
+[laya] E:\DeepSeek\laya-local\models\laya ready in 17.5s on cuda
+[laya] warmup done in 0.5s
+  打开页面 : http://127.0.0.1:8080/
+  健康检查 : http://127.0.0.1:8080/api/health
+  Ctrl+C 停止

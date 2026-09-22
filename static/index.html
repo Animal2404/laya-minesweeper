@@ -195,6 +195,13 @@
     </div>
     <div class="ctrls">
       <div class="selwrap">
+        <label for="modelSel">模型</label>
+        <select id="modelSel" title="用哪个模型做参考判断">
+          <option value="laya">Laya（本地）</option>
+          <option value="jev">Jev（云端）</option>
+        </select>
+      </div>
+      <div class="selwrap">
         <label for="theme">主题</label>
         <select id="theme">
           <option value="dark">深色</option>
@@ -354,12 +361,15 @@ function cellSize() {
   return Math.max(10, Math.min(26, cs));
 }
 const API = '/api/predict';
+/* 当前用于"参考判断"的模型：laya=本地，jev=云端。顶部下拉切换。 */
+let MODEL = 'laya';
+try { MODEL = localStorage.getItem('laya-ms-model') || 'laya'; } catch (e) {}
 /* 必须显式指定模型，不能交给 Router 自动路由：
  * boards 的 state 是中文，Router 会判定「非拉丁文字 → multilingual」，
  * 而本机只保留了 typed-decisions，multilingual 已被删除，
  * 于是会抛 FileNotFoundError: Subfolder 'multilingual' not found（HTTP 500）。
  * 需要别的模型时用 ?model=xxx 覆盖。 */
-const MODEL = new URLSearchParams(location.search).get('model') || 'typed-decisions';
+
 
 /* ==========================================================================
  * 棋盘
@@ -396,7 +406,7 @@ class Board {
    */
   plant(sr, sc) {
     const safe = new Set([sr + ',' + sc]);
-    const RAD = 2;
+    const RAD = (typeof window !== 'undefined' && window.__rad != null) ? window.__rad : 2;
     for (let dr = -RAD; dr <= RAD; dr++) for (let dc = -RAD; dc <= RAD; dc++) {
       const r = sr + dr, c = sc + dc;
       if (r >= 0 && r < ROWS && c >= 0 && c < COLS) safe.add(r + ',' + c);
@@ -941,6 +951,21 @@ function solve(b, depth) {
     }
   }
 
+  // ==========================================================================
+  // 关键补漏：把「概率算出来恰好是 0 / 1」的自由格提升为**必然判定**。
+  //
+  // 阶段三给自由格算的 fp = wmine / (wsum * free3)。当前沿格必须吃掉全部
+  // 剩余雷时 needFree 只能是 0，于是 wmine = 0 → fp = 0，这些格子是
+  // **绝对安全**的。但旧代码只把 fp 写进 probs，从不加进 safe ——
+  // 结果这些白送的格子永远不被点，求解器转去前沿硬赌 50/50。
+  //
+  // 这正是用户截图里「3 右边的格子明明没有雷却踩雷」那一类漏判。
+  // ==========================================================================
+  for (const [k, v] of probs) {
+    if (!Number.isFinite(v)) continue;
+    if (v <= 1e-12) safe.add(k);
+    else if (v >= 1 - 1e-12) mines.add(k);
+  }
   for (const k of safe) probs.set(k, 0);
   for (const k of mines) probs.set(k, 1);
 
@@ -948,7 +973,7 @@ function solve(b, depth) {
   // 不做这一步会在界面上显示 "P(雷) NaN%"。
   for (const [k, v] of [...probs]) if (!Number.isFinite(v)) probs.delete(k);
 
-  return {safe, mines, probs, cons, groups, enumCells, solutions, tooBig,
+  return {safe, mines, probs, cons, groups, frontier: allCells, enumCells, solutions, tooBig,
           exactAll, totalHidden, minesLeft, globalWeight};
 }
 
@@ -1947,12 +1972,48 @@ function planMoves(b, depth, maxMoves) {
     // 只有当"前沿最优"明显比"远处最优"更危险时才考虑远处。
     // 为什么还要留这个口子：前沿概率可能高达 60%+，而远处恒等于密度
     // （20% 左右），这时去远处赌一把反而更划算。
-    const all = frontier.length ? frontier.slice() : remote.slice();
-    if (frontier.length && remote.length) {
-      const fp = frontier.reduce((m, x) => Math.min(m, x.p === null ? 1 : x.p), 1);
-      const rp = remote[0].p === null ? gp0(sim) : remote[0].p;
-      if (rp < fp - 0.20) all.push(...remote);      // 远处明显更安全才纳入
+    // ----------------------------------------------------------------------
+    // 自由格的真实概率
+    //
+    // 自由格（不在任何约束里）不在 sol.probs 中，旧代码用 gp0() 的**全局密度**
+    // 顶替：剩余雷数 / 剩余未知格数。这是错的 —— 它没扣掉前沿格必须占用的雷。
+    //
+    // 实测反例（9x9 中局）：剩余 2 颗雷，前沿 9 格的期望雷数恰好也是 2.00，
+    // 于是 11 个自由格的真实雷率是 **0.000（绝对安全）**，而 gp0 算成 0.100。
+    // 求解器因此从不选这些白送的格子，转而去一堆 50/50 里硬赌。
+    //
+    // 正确算法：自由格概率 = (剩余雷数 - 前沿期望雷数) / 自由格数。
+    // 前沿期望雷数 = Σ sol.probs（前沿格概率之和）。
+    // ----------------------------------------------------------------------
+    // 前沿格 = 被至少一条约束覆盖的格子（solve 返回的 frontier 集合）
+    const frontSet = (sol && sol.frontier) ? new Set(sol.frontier) : null;
+    let frontSum = 0, frontN = 0;
+    for (const k of (frontSet || [])) {
+      const v = sol.probs.get(k);
+      if (Number.isFinite(v)) { frontSum += v; frontN++; }
     }
+    const minesLeftNow = MINES - sim.flags;
+    const freeN = remote.length;
+    let freeP = null;
+    if (freeN > 0) {
+      const v = (minesLeftNow - frontSum) / freeN;
+      if (Number.isFinite(v)) freeP = Math.max(0, Math.min(1, v));
+    }
+    for (const x of remote) if (x.p === null) x.p = (freeP === null ? gp0(sim) : freeP);
+
+    // 选择策略：
+    //   1) 前沿格里有 0 概率的 → 直接用（等价于必然安全，理论上已被 safe 捕获）
+    //   2) 否则取「前沿最优」与「自由格」中更安全的一个
+    //      自由格概率若为 0，就是白送的，必须先点它
+    const all = frontier.slice();
+    if (remote.length) {
+      const fp = frontier.length
+        ? frontier.reduce((m, x) => Math.min(m, x.p === null ? 1 : x.p), 1) : 1;
+      const rp = remote.reduce((m, x) => Math.min(m, x.p === null ? 1 : x.p), 1);
+      // 自由格更安全就纳入（含 rp==0 的绝对安全情形）；差距很小也纳入，让排序决定
+      if (rp <= fp + 1e-9) all.push(...remote);
+    }
+    if (!all.length) all.push(...remote);
     if (!all.length) { out.stuck = true; break; }
 
     const gp = estimateGlobal(sim);
@@ -2553,7 +2614,32 @@ function setThemeMode(mode) {
   window.__themeMode = mode;
 }
 
-(function initTheme() {
+/* 参考模型切换：Laya（本地）/ Jev（云端）。
+   只影响"猜的时候问哪个模型做参考"，不影响求解器决策。 */
+function initModelSel() {
+  const sel = el('modelSel');
+  if (!sel) return;
+  sel.value = MODEL;
+  sel.onchange = () => {
+    MODEL = sel.value;
+    try { localStorage.setItem('laya-ms-model', MODEL); } catch (e) {}
+    setStatus(`参考模型已切换为 <b>${sel.options[sel.selectedIndex].textContent}</b>。`);
+  };
+  fetch('/api/models').then(r => r.json()).then(d => {
+    for (const m of (d.models || [])) {
+      const opt = [...sel.options].find(o => o.value === m.id);
+      if (!opt) continue;
+      opt.textContent = m.label + (m.ready ? '' : '（不可用）');
+      opt.disabled = !m.ready;
+      if (m.id === MODEL && !m.ready) {
+        MODEL = 'laya'; sel.value = 'laya';
+        setStatus('云端模型不可用，已切回 Laya。');
+      }
+    }
+  }).catch(() => {});
+}
+
+function initTheme() {
   let saved = null;
   try { saved = localStorage.getItem(THEME_KEY); } catch (e) {}
   const mode = ['dark', 'light', 'system'].includes(saved) ? saved : 'dark';   // 默认深色
@@ -2569,7 +2655,7 @@ function setThemeMode(mode) {
     if (mq.addEventListener) mq.addEventListener('change', onSys);
     else if (mq.addListener) mq.addListener(onSys);
   }
-})();
+}
 
 /* 窗口尺寸变化时重算格子大小（否则大棋盘在窄窗口里会溢出） */
 let _rsz = null;
@@ -2580,6 +2666,7 @@ window.addEventListener('resize', () => {
 
 /* 启动 */
 buildGrid(); paint();
+initModelSel();
 </script>
 </body>
 </html>
