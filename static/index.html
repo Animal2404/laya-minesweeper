@@ -129,6 +129,23 @@
   .badge.bad{background:rgba(224,69,58,.13);color:#e0453a}
   .badge.warn{background:rgba(224,138,42,.15);color:#b8752a}
 
+  /* ---------- 自动测试面板 ---------- */
+  .runbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:12px 0 4px;font-size:13px}
+  .runbar label{display:flex;align-items:center;gap:6px;color:var(--dim)}
+  .runbar select{background:var(--input);color:var(--fg);border:1px solid var(--line);
+    border-radius:7px;padding:7px 10px;font:inherit}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0 6px}
+  .kpi{background:var(--raised);border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+  .kpi .k{color:var(--dim);font-size:11.5px}
+  .kpi .v{font-size:23px;font-weight:800;margin-top:3px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .kpi .n{color:var(--dim);font-size:11px;margin-top:2px}
+  .track{height:6px;background:var(--line);border-radius:4px;overflow:hidden;min-width:70px}
+  .track.big{height:9px;margin:10px 0 4px}
+  .track>i{display:block;height:100%;background:var(--blue);width:0;transition:width .2s}
+  .track.good>i{background:#3ddc84}
+  .track.mid>i{background:#ffc53d}
+  .track.low>i{background:#ff6b5e}
+
   /* ---------- Laya 对比面板 ---------- */
   .panel{margin-top:18px;background:var(--card);border:1px solid var(--line);
     border-radius:12px;overflow:hidden}
@@ -219,27 +236,41 @@
   </div>
 
   <div class="panel open" id="panel">
-    <h2 id="panelHd">Laya 的判断 vs 数学真值 <span class="tag" id="panelTag">（点开/收起）</span></h2>
+    <h2>自动测试 <span class="tag">让求解器自己跑很多局，看通关率</span></h2>
     <div class="body">
-      <table>
-        <thead><tr>
-          <th>待判格</th><th>周边的已知约束</th>
-          <th class="num">数学真值 P(雷)</th><th class="num">Laya P(雷)</th><th>对比</th>
-        </tr></thead>
-        <tbody id="cmpBody"><tr><td colspan="5" class="empty">还没跑过。点「预测一步」看两边各自的判断。</td></tr></tbody>
-      </table>
-      <div class="note" id="cmpNote"></div>
+      <div class="runbar">
+        <label>跑
+          <select id="runN">
+            <option value="20">20 局</option>
+            <option value="50">50 局</option>
+            <option value="100" selected>100 局</option>
+          </select>
+        </label>
+        <label>棋盘
+          <select id="runLevel"></select>
+        </label>
+        <button id="btnRun" class="primary">开始测试</button>
+        <button id="btnRunStop" class="ghost" disabled>停止</button>
+      </div>
+
+      <div class="kpis" id="runKpis" style="display:none">
+        <div class="kpi"><div class="k">通关率</div><div class="v" id="kWin">—</div><div class="n" id="kWinN"></div></div>
+        <div class="kpi"><div class="k">进度</div><div class="v" id="kProg">—</div><div class="n" id="kProgN"></div></div>
+        <div class="kpi"><div class="k">平均每局猜测</div><div class="v" id="kGuess">—</div><div class="n">越少越好</div></div>
+        <div class="kpi"><div class="k">平均每局推理</div><div class="v" id="kDeduce">—</div><div class="n">越多越好</div></div>
+      </div>
+
+      <div class="track big" id="runTrack" style="display:none"><i></i></div>
+      <div class="note" id="runNote">选好局数与棋盘，点「开始测试」。测试在后台逐局跑，不影响你继续玩。</div>
     </div>
   </div>
 
   <div class="note">
-    <b>这里谁在干什么：</b>扫雷本质是约束满足问题 —— 每个已揭开的数字都给出一个等式
-    （「我周围还有 N 颗雷，分布在 M 个未揭开格里」）。<code>推演深度</code>控制代码做几轮约束传播
-    （单格推导 → 子集推导 的迭代），并对小规模连通块做<b>完全枚举</b>，从而算出每个待判格的<b>精确</b>含雷概率。<br>
-    <b>Laya 的作用：</b>代码把每个待判格变成一句中文描述（「它北面是已揭开的 1，该 1 周围还有 3 个未揭开格、其中还需 1 颗雷……」），
-    一次性问 Laya「这一格下面有地雷吗」。上面那张表把 Laya 的概率和数学真值并排显示，好判断它的判断到底值不值得信。<br>
-    <b>为什么必须这样接：</b>Laya 是文本蕴含模型，不是空间推理模型。直接问它「点哪个格子」会答错（我实测过它在贪吃蛇里
-    输给随机）。所以让它读<b>文字化后的约束</b>、做<b>是非判断</b>，把「选哪格」留给代码。
+    <b>怎么玩：</b>右键插旗，左键揭格，双击数字格可一键展开周围。点「让 Laya 来玩」让求解器自动打。<br>
+    <b>谁在做决策：</b>求解器。它把每个已揭开的数字当成一条等式（「我周围还有 N 颗雷，分布在 M 个未知格里」），
+    联立所有等式做枚举，算出每个未知格的<b>精确</b>含雷概率。概率 0 就是绝对安全，概率 1 就是必然有雷。<br>
+    <b>Laya 做什么：</b>只在<b>猜</b>的时候被询问，作为参考。它不参与决策 —— 实测它对不同概率的格子都回答 ~51%，没有区分度。<br>
+    <b>旗子：</b>橙色圆点旗是求解器自动插的，红色旗是你手动插的。插旗会让约束更紧，对求解<b>有帮助</b>，所以求解器会主动插。
   </div>
 
 </div>
@@ -1201,48 +1232,135 @@ function setStatus(html, spin) {
 /* 这一步没有询问 Laya：不要清空表格，只改表头提示。
  * 之前这里调 renderCmp({rows:[]}) 会把整张对比表擦掉，导致玩家永远
  * 看不到 Laya 与数学真值的对比（而那是本页面的核心）。 */
-function markNoLaya(reason) {
-  const tag = el('panelTag');
-  if (tag) tag.textContent = reason;
-  el('panel').classList.add('open');
+/* Laya 对比表已移除；保留空函数以免调用点报错 */
+function markNoLaya() {}
+
+/* 对比表已移除；保留空函数以免调用点报错 */
+function renderCmp() {}
+
+/* ==========================================================================
+ * 自动测试：连续跑 N 局，统计通关率
+ *
+ * 用 setTimeout 分片，每片最多 25ms —— 否则大棋盘上一局几万步，
+ * 同步跑会让页面完全卡死。
+ * ======================================================================== */
+const RUN = {active: false, stop: false, n: 0, done: 0, wins: 0,
+             guessSum: 0, deduceSum: 0, stalled: 0, errors: 0,
+             cols: 30, rows: 16, mines: 99};
+
+/** 独立模拟一局：用临时全局尺寸跑，结束后恢复，不碰真实棋盘 */
+function simulateOne(cols, rows, mines) {
+  const savedC = COLS, savedR = ROWS, savedM = MINES;
+  COLS = cols; ROWS = rows; MINES = mines;
+  try {
+    const b = new Board();
+    b.cells = Array.from({length: rows}, () => Array.from({length: cols},
+      () => ({mine: false, op: false, flag: false, adj: 0})));
+    const pool = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) pool.push([r, c]);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    for (let i = 0; i < Math.min(mines, pool.length); i++) {
+      const [r, c] = pool[i]; b.cells[r][c].mine = true;
+    }
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      let k = 0;
+      for (const [rr, cc] of b.nb(r, c)) if (b.cells[rr][cc].mine) k++;
+      b.cells[r][c].adj = k;
+    }
+    // 找 3x3 无雷点开局（对应 plant() 的保证）
+    let st = null;
+    for (let r = 1; r < rows - 1 && !st; r++) for (let c = 1; c < cols - 1 && !st; c++) {
+      let okk = true;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++)
+        if (b.cells[r + dr][c + dc].mine) okk = false;
+      if (okk) st = [r, c];
+    }
+    if (!st) return {skip: true};
+    b.started = true; b.t0 = Date.now();
+    b.reveal(st[0], st[1]);
+
+    let guesses = 0, deduced = 0;
+    const LIMIT = Math.max(4000, cols * rows * 4);
+    for (let step = 0; step < LIMIT; step++) {
+      if (b.over) return {win: !!b.win, guesses, deduced};
+      const pl = planMoves(b, 3, 4);
+      if (!pl.moves.length) return {win: false, guesses, deduced, stalled: true};
+      const mv = pl.moves[0];
+      if (mv.certain) deduced++; else guesses++;
+      const res = applyMove(b, mv);
+      if (res.hitMine) return {win: false, guesses, deduced};
+    }
+    return {win: false, guesses, deduced, stalled: true};
+  } finally {
+    COLS = savedC; ROWS = savedR; MINES = savedM;
+  }
 }
 
-function renderCmp(cmp) {
-  lastCmp = cmp;
-  const _tag = el('panelTag');
-  if (_tag && cmp && cmp.rows && cmp.rows.length) _tag.textContent = '（点开/收起）';
-  const tb = el('cmpBody');
-  if (!cmp || !cmp.rows.length) {
-    tb.innerHTML = '<tr><td colspan="5" class="empty">这一步没有可判断的待判格（可能已经解完，或需要纯猜）。</td></tr>';
-    el('cmpNote').textContent = cmp && cmp.note ? cmp.note : '';
-    return;
-  }
-  tb.innerHTML = '';
-  for (const row of cmp.rows) {
-    const [r, c] = key2rc(row.k);
-    const tr = document.createElement('tr');
-    const sp = row.solverP, lp = row.layaP;
-    const diff = (lp == null) ? null : Math.abs(lp - sp);
-    const tag = (lp == null) ? '<span class="badge warn">没答</span>'
-      : diff < 0.15 ? '<span class="badge ok">接近</span>'
-      : diff < 0.4 ? '<span class="badge warn">偏差</span>'
-      : '<span class="badge bad">差很远</span>';
-    tr.innerHTML =
-      `<td>R${r + 1}C${c + 1}</td>` +
-      `<td style="color:var(--dim);font-size:11.5px">${row.desc.slice(0, 64)}…</td>` +
-      `<td class="num">${(100 * sp).toFixed(1)}%</td>` +
-      `<td class="num">${lp == null ? '—' : (100 * lp).toFixed(1) + '%'}</td>` +
-      `<td>${tag}</td>`;
-    tb.appendChild(tr);
-  }
-  let note = `数学真值来自完全枚举（本次共 ${cmp.solutions} 个合法方案，覆盖 ${cmp.enumCells} 格）。`;
-  if (cmp.layaMs) note += ` Laya 一次前向传播 ${cmp.layaMs.toFixed(0)} ms（${cmp.keys} 个问题同批）。`;
-  if (cmp.agreeTop != null) {
-    note += ` 两边选中的「最安全格」${cmp.agreeTop ? '一致' : '不一致'}。`;
-    note += ` 累计一致率 ${stats.total ? (100 * stats.agree / stats.total).toFixed(0) : 0}%`
-         + `（${stats.agree}/${stats.total} 次）；Laya 选的格子里踩雷 ${stats.layaTop - stats.layaTopOK} 次。`;
-  }
-  el('cmpNote').textContent = note;
+function updateRunKpis() {
+  const n = RUN.done || 1;
+  const rate = 100 * RUN.wins / n;
+  el('kWin').textContent = rate.toFixed(1) + '%';
+  el('kWinN').textContent = RUN.wins + ' / ' + RUN.done + ' 局通关';
+  el('kProg').textContent = RUN.done + ' / ' + RUN.n;
+  el('kGuess').textContent = (RUN.guessSum / n).toFixed(1);
+  el('kDeduce').textContent = (RUN.deduceSum / n).toFixed(0);
+  const bar = el('runTrack').firstElementChild;
+  if (bar) bar.style.width = (100 * RUN.done / RUN.n).toFixed(1) + '%';
+  el('runTrack').className = 'track big ' + (rate >= 60 ? 'good' : rate >= 25 ? 'mid' : 'low');
+}
+
+function finishRun() {
+  RUN.active = false;
+  el('btnRun').disabled = false; el('btnRunStop').disabled = true;
+  const n = RUN.done || 1;
+  const rate = 100 * RUN.wins / n;
+  const lv = LEVEL_BY_ID[el('runLevel').value] || {};
+  let txt = `${lv.name || '棋盘'}（${RUN.cols}×${RUN.rows}=${RUN.cols*RUN.rows} 格，`
+          + `${RUN.mines} 雷，密度 ${(100*RUN.mines/(RUN.cols*RUN.rows)).toFixed(1)}%）`
+          + `跑完 ${RUN.done} 局：通关 ${RUN.wins} 局，通关率 ${rate.toFixed(1)}%。`;
+  if (RUN.stop) txt += '（手动停止）';
+  if (RUN.stalled) txt += ` 其中 ${RUN.stalled} 局卡住。`;
+  if (RUN.errors) txt += ` ${RUN.errors} 局出错。`;
+  el('runNote').textContent = txt;
+}
+
+function startRun() {
+  if (RUN.active) return;
+  RUN.active = true; RUN.stop = false;
+  RUN.n = +el('runN').value;
+  RUN.done = 0; RUN.wins = 0; RUN.guessSum = 0; RUN.deduceSum = 0;
+  RUN.stalled = 0; RUN.errors = 0;
+
+  const lv = LEVEL_BY_ID[el('runLevel').value] || LEVEL_BY_ID['default'];
+  RUN.cols = lv.cols; RUN.rows = lv.rows; RUN.mines = lv.mines;
+
+  el('btnRun').disabled = true; el('btnRunStop').disabled = false;
+  el('runKpis').style.display = ''; el('runTrack').style.display = '';
+  el('runNote').textContent = '测试进行中…';
+  updateRunKpis();
+
+  const slice = () => {
+    if (RUN.stop || RUN.done >= RUN.n) { finishRun(); return; }
+    const t0 = performance.now();
+    while (RUN.done < RUN.n && performance.now() - t0 < 25) {
+      let res;
+      try { res = simulateOne(RUN.cols, RUN.rows, RUN.mines); }
+      catch (e) { RUN.errors++; res = {skip: true}; }
+      RUN.done++;
+      if (!res.skip) {
+        if (res.win) RUN.wins++;
+        RUN.guessSum += res.guesses || 0;
+        RUN.deduceSum += res.deduced || 0;
+        if (res.stalled) RUN.stalled++;
+      }
+      updateRunKpis();
+    }
+    setTimeout(slice, 0);
+  };
+  setTimeout(slice, 0);
 }
 
 /* ==========================================================================
@@ -1331,16 +1449,23 @@ function planMoves(b, depth, maxMoves) {
     if (!sol || !sol.mines || !sol.safe) { out.error = (sol && sol.error) || '求解失败'; break; }
     if (round === 0) out.sol = sol;
 
-    // 必然是雷：记录为"自动标记"（不占预览序号），并在克隆盘上插旗，
-    // 这样后续轮次的推理能利用它们。
+    // 必然是雷：在克隆盘上插旗（让后续轮次能利用），
+    // 同时把尚未插旗的那些作为 **flag move 输出** —— 否则真实棋盘永远不会插旗，
+    // 玩家也就看不到"求解器判定为雷"的标记。
     let flagged = 0;
+    const newFlags = [];
     for (const k of sol.mines) {
       const [r, c] = key2rc(k);
       if (!sim.cells[r][c].flag && !sim.cells[r][c].op) {
         sim.toggleFlag(r, c);
+        newFlags.push(k);
         if (!solverFlags.has(k)) out.flags.push(k);
         flagged++;
       }
+    }
+    // 插旗优先于揭开：先把所有必然雷标出来，再揭安全格
+    for (const k of newFlags) {
+      out.moves.push({kind: 'flag', key: k, certain: true, p: 1, reason: '约束推导为必然雷'});
     }
 
     // 必然是安全：无论本轮是否插了旗，都要继续产出走法。
@@ -1363,7 +1488,7 @@ function planMoves(b, depth, maxMoves) {
       }
     }
 
-    if (flagged) continue;      // 只插了旗、没有安全格 → 下一轮重新求解
+    if (flagged && !sol.safe.size) continue;   // 全是旗、没有安全格 → 下一轮重解
 
     // 推不出来 → 猜。候选是**全部**未知格，不只数字旁边
     const all = [];
@@ -1678,7 +1803,7 @@ el('btnAuto').onclick = () => { if (auto) stopAuto(); else startAuto(); };
 el('btnStep').onclick = () => doStep(true);
 // 重新开局：保持当前棋盘尺寸与难度
 el('btnReset').onclick = () => applyBoard(COLS, ROWS, MINES);
-el('panelHd').onclick = () => el('panel').classList.toggle('open');
+// 面板标题不再可点（Laya 对比表已换成自动测试面板）
 
 /* ---- 难度下拉 ---- */
 (function initLevels() {
@@ -1705,6 +1830,23 @@ el('panelHd').onclick = () => el('panel').classList.toggle('open');
     el('custombar').classList.remove('on');
     applyBoard(l.cols, l.rows, l.mines);
   };
+})();
+
+/* ---- 自动测试面板 ---- */
+(function initRunPanel() {
+  const rl = el('runLevel');
+  if (!rl) return;
+  rl.innerHTML = '';
+  for (const l of LEVELS) {
+    if (l.id === 'custom') continue;
+    const o = document.createElement('option');
+    o.value = l.id;
+    o.textContent = `${l.name}  ${l.cols}×${l.rows}=${l.cols*l.rows} 格 · ${l.mines} 雷 · ${(100*l.mines/(l.cols*l.rows)).toFixed(1)}%`;
+    rl.appendChild(o);
+  }
+  rl.value = 'default';
+  el('btnRun').onclick = startRun;
+  el('btnRunStop').onclick = () => { RUN.stop = true; el('runNote').textContent = '正在停止…'; };
 })();
 
 /* ---- 自定义面板 ---- */
