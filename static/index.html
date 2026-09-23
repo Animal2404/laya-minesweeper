@@ -2474,11 +2474,36 @@ async function decideMove(b, depth) {
   const chosenId = String(((data.answers || {}).move || {}).choice || '');
   const picked = cands.slice(0, TOP).find(cd => cd.id === chosenId);
   if (!picked) throw new Error(MNAME + ' 没有返回有效候选');
+
+  // ----------------------------------------------------------------------
+  // 安全阀：模型可以改选，但**不允许选得比数学最优差太多**。
+  //
+  // 为什么需要：模型是文本判断模型，看的是选项文字里的数字，它并不真的
+  // 理解扫雷的空间结构（实测把"数学上 100% 安全"的格子判成 39% 有雷）。
+  // 若完全听它，它挑一个 24% 的格子而放着 12% 的不用，胜率会掉。
+  //
+  // 规则：模型的选择若雷概率不超过数学最优 + MARGIN，就采纳（这给了模型
+  //       在"几个候选差不多"时表达偏好的空间）；超出则驳回，用数学最优。
+  // 另外 survival 明显更高时也允许（存活率是我们自己算的，可信）。
+  // ----------------------------------------------------------------------
+  const MARGIN = (typeof window !== 'undefined' && window.__modelMargin != null)
+                 ? window.__modelMargin : 0.03;
+  const best = cands[0];
+  const worseP = picked.mineProbability - best.mineProbability;
+  const betterS = picked.survival - best.survival;
+  const acceptable = (worseP <= MARGIN + 1e-9) || (betterS >= 0.15);
+  if (!acceptable) {
+    return {source: 'rules', selected: best, candidates: cands, ms,
+            model: MNAME, overruled: true, agreeTop: false,
+            tried: picked.id, triedP: picked.mineProbability,
+            note: `${MNAME} 选了 ${picked.id}（雷概率 ${(100*picked.mineProbability).toFixed(1)}%），`
+                + `比数学最优差 ${(100*worseP).toFixed(1)} 个百分点，已驳回`};
+  }
   return {source: 'model', selected: picked, candidates: cands, ms, model: MNAME,
-          agreeTop: picked === cands[0]};
+          agreeTop: picked === best, overruled: false};
 }
 
-/** 现有棋盘的粗略密度：剩余雷数 / 剩余未知格数 *//** 现有棋盘的粗略密度：剩余雷数 / 剩余未知格数 */
+/** 现有棋盘的粗略密度：剩余雷数 / 剩余未知格数 */
 function gp0(b) {
   const hidden = countHidden(b);
   const left = MINES - b.flags;
@@ -2531,7 +2556,9 @@ async function doStep(useLaya) {
       const rr = cd.row, cc = cd.col;
       const srcTxt = plan.source === 'model'
         ? `<b>${MNAME} 选择</b>` + (plan.agreeTop ? '（与数学一致）' : '（<b>改了数学的首选</b>）')
-        : (cd.certainSafe ? '<b>规则确定安全</b>' : '<b>数学选择</b>');
+        : (plan.overruled
+            ? `<b>已驳回 ${MNAME}</b>（${plan.note}）`
+            : (cd.certainSafe ? '<b>规则确定安全</b>' : '<b>数学选择</b>'));
       setStatus(`${srcTxt} → R${rr + 1}C${cc + 1}`
               + `　雷概率 ${(100 * cd.mineProbability).toFixed(2)}%`
               + `　${plan.candidates.length > 1 ? (+el('depth').value + ' 步存活 ' + (100 * cd.survival).toFixed(1) + '%') : ''}`

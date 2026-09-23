@@ -34,7 +34,7 @@ global.setInterval=()=>0;global.clearInterval=()=>{};global.setTimeout=()=>0;
 // 把内部函数暴露给外界
 const exports = `
 module.exports = {Board, solve, planMoves, applyMove, cloneBoard, buildConstraints,
-  isGuessFreeBoard, twoStepLoss,
+  isGuessFreeBoard, twoStepLoss, sampleWorlds, forecast, buildCandidates, decideMove, gp0,
   setSize(c,r,m){COLS=c;ROWS=r;MINES=m;},
   getSize(){return {COLS,ROWS,MINES};}};
 `;
