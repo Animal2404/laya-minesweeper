@@ -195,6 +195,13 @@
     </div>
     <div class="ctrls">
       <div class="selwrap">
+        <label for="decideSel">走法</label>
+        <select id="decideSel" title="谁来决定走哪一格">
+          <option value="solver">求解器（数学推理）</option>
+          <option value="ai">纯 AI 模型</option>
+        </select>
+      </div>
+      <div class="selwrap">
         <label for="modelSel">模型</label>
         <select id="modelSel" title="用哪个模型做参考判断">
           <option value="laya">Laya（本地 421M）</option>
@@ -364,6 +371,11 @@ function cellSize() {
 const API = '/api/predict';
 /* 当前用于"参考判断"的模型：laya=本地，jev=云端。顶部下拉切换。 */
 let MODEL = 'laya';
+/* 决策方式：
+ *   solver  求解器负责走法（模型只在必须猜时被参考）
+ *   ai      纯模型走法（棋盘渲染成文字交给模型，它自己选格子） */
+let DECIDE = 'solver';
+try { DECIDE = localStorage.getItem('laya-ms-decide') || 'solver'; } catch (e) {}
 try { MODEL = localStorage.getItem('laya-ms-model') || 'laya'; } catch (e) {}
 /* 必须显式指定模型，不能交给 Router 自动路由：
  * boards 的 state 是中文，Router 会判定「非拉丁文字 → multilingual」，
@@ -2223,6 +2235,94 @@ function twoStepLoss(b, key, sol, depth, deadline) {
   return pMine + (1 - pMine) * avgLoss;
 }
 
+/**
+ * 把棋盘渲染成文字，喂给决策模型。
+ * 模型只认文本，看不到网格，所以必须把空间结构序列化成字符画。
+ *   ?  未知    F  已插旗    0-8  已揭开的数字
+ * 例（3 列 2 行）：
+ *   ?F1
+ *   12?
+ */
+function boardText(b) {
+  const rows = [];
+  for (let r = 0; r < ROWS; r++) {
+    let line = '';
+    for (let c = 0; c < COLS; c++) {
+      const x = b.cells[r][c];
+      if (x.flag) line += 'F';
+      else if (!x.op) line += '?';
+      else line += String(x.adj);
+    }
+    rows.push('第' + (r + 1) + '行 ' + line);
+  }
+  return `扫雷棋盘 ${COLS} 列 ${ROWS} 行，共 ${MINES} 颗雷。`
+       + `已揭开 ${b.revealed} 格，插旗 ${b.flags} 格，还剩 ${MINES - b.flags} 颗雷没找到。
+`
+       + `符号：? = 还没揭开（不知道有没有雷）  F = 已插旗  0-8 = 已揭开的格子及其周围雷数
+`
+       + rows.join(String.fromCharCode(10));
+}
+
+/** 候选格：优先"紧贴已知数字"的未知格，那些才有信息量 */
+function aiCandidates(b, cap) {
+  const near = [], far = [];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const x = b.cells[r][c];
+    if (x.op || x.flag) continue;
+    const k = r + ',' + c;
+    const touches = b.nb(r, c).some(([rr, cc]) => b.cells[rr][cc].op && b.cells[rr][cc].adj > 0);
+    (touches ? near : far).push(k);
+  }
+  const out = near.length ? near : far;
+  // 太多候选会让提问过长；均匀抽稀，保留覆盖面
+  if (out.length <= cap) return out;
+  const step = out.length / cap, pick = [];
+  for (let i = 0; i < out.length && pick.length < cap; i += step) pick.push(out[Math.floor(i)]);
+  return pick;
+}
+
+/**
+ * 纯模型决策：完全不问求解器，直接把棋盘画成文字，让模型挑一格。
+ * 返回 {key, p, ms, model} 或抛错。
+ */
+async function aiPick(b, cap) {
+  const cands = aiCandidates(b, cap || 24);
+  if (!cands.length) throw new Error('没有可选的格子了');
+  const state = boardText(b);
+  const q = {
+    type: 'choice',
+    instructions: '下一格应该揭开哪一个？挑一个最不可能埋着地雷的格子。'
+                + '只根据上面棋盘里的数字推理，不要猜。',
+    criteria: {},
+  };
+  for (const k of cands) {
+    const [r, c] = key2rc(k);
+    q.criteria['c_' + k] = `第 ${r + 1} 行第 ${c + 1} 列`;
+  }
+  const body = JSON.stringify({state, questions: {'pick': q}, model: MODEL});
+  const t0 = performance.now();
+  const res = await fetch(API, {method: 'POST', headers: {'Content-Type': 'application/json'}, body});
+  const ms = performance.now() - t0;
+  if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text()).slice(0, 140));
+  const data = await res.json();
+  const a = (data.answers || {}).pick || {};
+  const probs = a.probabilities || {};
+  let best = null, bestP = Infinity;
+  for (const k of cands) {
+    const v = probs['c_' + k];
+    if (Number.isFinite(v) && v < bestP) { bestP = v; best = k; }
+  }
+  if (!best) {
+    // 模型没给概率时退回它的 choice 字段
+    const ch = String(a.choice || '');
+    best = cands.find(k => ch === 'c_' + k) || null;
+    bestP = NaN;
+  }
+  if (!best) throw new Error('模型没有给出有效的格子');
+  return {key: best, p: bestP, ms, model: MODEL,
+          choice: a.choice, conf: a.confidence};
+}
+
 /** 现有棋盘的粗略密度：剩余雷数 / 剩余未知格数 */
 function gp0(b) {
   const hidden = countHidden(b);
@@ -2244,6 +2344,42 @@ async function doStep(useLaya) {
   busy = true;
   el('btnAuto').disabled = true; el('btnStep').disabled = true;
   try {
+    // ===== 纯 AI 模式：完全不问求解器，棋盘画成文字交给模型 =====
+    if (DECIDE === 'ai') {
+      const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev'}[MODEL] || MODEL;
+      if (!board.started) {
+        // 开局：中间附近随机开一格（模型此时没有任何信息可推理）
+        const r = Math.max(2, Math.min(ROWS - 3, Math.round(ROWS / 2)));
+        const c = Math.max(2, Math.min(COLS - 3, Math.round(COLS / 2)));
+        applyMove(board, {kind:'reveal', key: r + ',' + c, certain:false, p:null});
+        board.steps++;
+        setStatus(`<b>纯 ${MNAME} 模式</b>：开局揭开 R${r + 1}C${c + 1}。接下来每一步都由 ${MNAME} 自己选。`);
+        paint();
+        return;
+      }
+      setStatus(`<b>纯 ${MNAME} 模式</b>：正在把棋盘交给 ${MNAME} 选格子…`, true);
+      let pick;
+      try {
+        pick = await aiPick(board, 24);
+        lastInferMs = pick.ms;
+        perf.infer.push(pick.ms);
+        if (perf.infer.length > 400) perf.infer.shift();
+      } catch (e) {
+        setStatus(`<b>${MNAME}</b> 调用失败：${String(e.message || e).slice(0, 120)}`);
+        if (auto) stopAuto();
+        return;
+      }
+      const [rr, cc] = key2rc(pick.key);
+      const hit = applyMove(board, {kind:'reveal', key: pick.key, certain:false, p:pick.p});
+      board.steps++;
+      const ptxt = Number.isFinite(pick.p) ? (100 * pick.p).toFixed(1) + '%' : '未知';
+      setStatus(`<b>纯 ${MNAME} 模式</b> → ${MNAME} 选了 R${rr + 1}C${cc + 1}`
+              + `（它给的 P(雷) ${ptxt}，耗时 ${pick.ms.toFixed(0)} 毫秒）`
+              + (hit.hitMine ? ' —— <b>踩雷了</b>' : ''));
+      paint();
+      return;
+    }
+
     const depth = +el('depth').value;
 
     // ---- 未开局：先开一格取信息（首点保证不踩雷）----
@@ -2269,7 +2405,7 @@ async function doStep(useLaya) {
     // 直接复用这次的规划结果做预览，**不要**再调 refreshPreview()
     // —— 那会再完整跑一遍 planMoves（每步求解两次，是"变慢"的主因）。
     const sol = pl.sol;
-    const mv = pl.moves[0];
+    let mv = pl.moves[0];
     adoptPreview(pl);
     if (!mv) {
       stuckNow = true;
@@ -2344,12 +2480,51 @@ async function doStep(useLaya) {
     }).sort((x, y) => x.solverP - y.solverP);
 
     const solverBest = mv.key;
-    let layaBest = null;
+
+    // ======================================================================
+    // 让模型真正参与决策（此前它只被记录，从不影响走法 —— 那是缺陷）
+    //
+    // 只在"必须猜"时生效：求解器已经算不出确定解，此时用模型在候选中挑一格。
+    // 融合方式：求解器的精确概率是主判据，模型的判断作为次级判据参与加权。
+    //   W=0  纯求解器（模型不参与）
+    //   W>0  求解器概率与模型概率加权，分数越低越优先
+    // 模型给出的 p 是"这一格有雷"的概率，与求解器同向。
+    // ======================================================================
+    const MIX_W = (typeof window !== 'undefined' && window.__mixW != null) ? window.__mixW : 0.35;
+    let chosen = mv.key, chooseBy = 'solver';
+    let modelBest = null, modelUsed = false;
+
     if (layaRes && layaRes.probs.size) {
-      layaBest = [...layaRes.probs.entries()].reduce((m, e) => e[1].p < m[1].p ? e : m)[0];
+      modelBest = [...layaRes.probs.entries()].reduce((m, e) => e[1].p < m[1].p ? e : m)[0];
       stats.total++;
-      if (layaBest === solverBest) stats.agree++;
+      if (modelBest === solverBest) stats.agree++;
     }
+
+    if (useLaya && MIX_W > 0 && layaRes && layaRes.probs.size >= 2) {
+      // 候选 = 求解器给的前若干个 + 模型给的前若干个，取并集
+      const candSet = new Set(useKeys);
+      candSet.add(solverBest); candSet.add(modelBest);
+      let bestScore = Infinity;
+      for (const k of candSet) {
+        const sp = solverP.has(k) ? solverP.get(k) : globalP;
+        const mp = layaRes.probs.has(k) ? layaRes.probs.get(k).p : sp;
+        if (!Number.isFinite(sp) || !Number.isFinite(mp)) continue;
+        const score = (1 - MIX_W) * sp + MIX_W * mp;
+        if (score < bestScore - 1e-9) { bestScore = score; chosen = k; }
+      }
+      if (chosen !== solverBest) chooseBy = 'model';
+      modelUsed = true;
+      stats.mixed = (stats.mixed || 0) + (chosen !== solverBest ? 1 : 0);
+    }
+
+    // `mv` 换成最终选中的那一格
+    if (chosen !== mv.key) {
+      const [cr, cc2] = key2rc(chosen);
+      const cp = solverP.has(chosen) ? solverP.get(chosen) : globalP;
+      mv = {...mv, key: chosen, p: cp};
+      pr = cr; pc = cc2;
+    }
+    const usedModel = modelUsed;
 
     renderCmp({rows: rowsCmp, solverSafe: [], layaTop: layaBest, keys: useKeys.length,
       solutions: sol ? sol.solutions : 0, enumCells: sol ? sol.enumCells : 0,
@@ -2364,12 +2539,16 @@ async function doStep(useLaya) {
     }
 
     const pickTxt = Number.isFinite(mv.p) ? (100 * mv.p).toFixed(1) + '%' : '未知';
-    let msg = `无法唯一确定 → <b>猜测</b> 全局最低概率格 R${pr + 1}C${pc + 1}（P(雷) ${pickTxt}）`;
-    if (layaBest) {
-      const [lr, lc] = key2rc(layaBest);
-      msg += `；Laya 认为是 R${lr + 1}C${lc + 1}` + (layaBest === solverBest ? '（一致）' : '（不一致）');
+    const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev'}[MODEL] || MODEL;
+    let msg = `无法唯一确定 → <b>猜测</b> R${pr + 1}C${pc + 1}（P(雷) ${pickTxt}）`;
+    if (usedModel) {
+      if (chooseBy === 'model') msg += ` · <b>${MNAME} 改选了这一格</b>`;
+      else msg += ` · ${MNAME} 与求解器一致`;
+    } else if (err) {
+      msg += ` · ${MNAME} 不可用：${String(err).slice(0, 70)}`;
+    } else if (useLaya) {
+      msg += ` · ${MNAME} 未启用融合`;
     }
-    if (err) msg += ` · Laya 出错：${err.slice(0, 80)}`;
     setStatus(msg + (hit.hitMine ? ' —— 踩雷了。' : ''));
     adoptPreview(pl);
     paint();
@@ -2626,16 +2805,58 @@ function initModelSel() {
     try { localStorage.setItem('laya-ms-model', MODEL); } catch (e) {}
     setStatus(`参考模型已切换为 <b>${sel.options[sel.selectedIndex].textContent}</b>。`);
   };
+  // 走法切换
+  const dsel = el('decideSel');
+  if (dsel) {
+    dsel.value = DECIDE;
+    dsel.onchange = () => {
+      DECIDE = dsel.value;
+      try { localStorage.setItem('laya-ms-decide', DECIDE); } catch (e) {}
+      const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev'}[MODEL] || MODEL;
+      setStatus(DECIDE === 'ai'
+        ? `<b>纯 AI 模式</b>：求解器不再参与，每一步都由 <b>${MNAME}</b> 自己选格子。`
+        : `已切回<b>求解器模式</b>：走法由约束求解器决定。`);
+      if (DECIDE === 'ai') { /* 模型必须在 */ }
+    };
+  }
+
   fetch('/api/models').then(r => r.json()).then(d => {
+    // 先按后端报的可用性刷新选项文案/禁用状态
     for (const m of (d.models || [])) {
       const opt = [...sel.options].find(o => o.value === m.id);
       if (!opt) continue;
       opt.textContent = m.label + (m.ready ? '' : '（不可用）');
       opt.disabled = !m.ready;
-      if (m.id === MODEL && !m.ready) {
-        MODEL = 'laya'; sel.value = 'laya';
-        setStatus('云端模型不可用，已切回 Laya。');
+    }
+    // 关键：以**本次启动的那一个**模型为准自动选中，不需要用户再点一次。
+    // bat 里选了什么，页面就停在什么上。
+    const primary = (d.primary || '').toLowerCase();
+    if (primary) {
+      const opt = [...sel.options].find(o => o.value === primary);
+      if (opt && !opt.disabled) {
+        MODEL = primary;
+        sel.value = primary;
+        try { localStorage.setItem('laya-ms-model', MODEL); } catch (e) {}
+      } else if (opt && opt.disabled) {
+        // 请求的模型没起来 → 退到第一个可用的，并说明原因
+        const first = [...sel.options].find(o => !o.disabled);
+        if (first) {
+          MODEL = first.value; sel.value = first.value;
+          try { localStorage.setItem('laya-ms-model', MODEL); } catch (e) {}
+          setStatus(`<b>${opt.textContent.replace('（不可用）','')}</b> 没启动起来，已改用 <b>${first.textContent}</b>。`);
+        }
       }
+    } else if (MODEL !== 'laya') {
+      // 没指定 primary（老启动方式）时，至少保证当前选中的是可用的
+      const cur = [...sel.options].find(o => o.value === MODEL);
+      if (!cur || cur.disabled) {
+        const first = [...sel.options].find(o => !o.disabled);
+        if (first) { MODEL = first.value; sel.value = first.value; }
+      }
+    }
+    const curOpt = sel.options[sel.selectedIndex];
+    if (curOpt && !curOpt.disabled && !d.primary) {
+      setStatus(`当前参考模型：<b>${curOpt.textContent}</b>`);
     }
   }).catch(() => {});
 }

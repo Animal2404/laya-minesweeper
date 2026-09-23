@@ -119,6 +119,10 @@ def warmup():
 # 两者都与 Laya 一样：给 state + questions，直接返回概率分布，不生成文本。
 # 通过环境变量配置地址；探不通就不注册该后端。
 # ---------------------------------------------------------------------------
+# bat 启动时用 --primary <id> 或环境变量 PRIMARY_MODEL 指定"本次要用的模型"，
+# 前端读到后会自动选中它，用户不必再手动切一次。
+PRIMARY_MODEL = os.environ.get("PRIMARY_MODEL", "").strip().lower()
+
 VON_URL = os.environ.get("VON_URL", "http://127.0.0.1:8150").rstrip("/")
 AGENTJEV_URL = os.environ.get("AGENTJEV_URL", "http://127.0.0.1:8149").rstrip("/")
 
@@ -263,6 +267,9 @@ def predict(payload: dict) -> dict:
 
     agent = AGENT
     if agent is None:
+        if STATUS["state"] == "skipped":
+            raise RuntimeError("本地 Laya 未加载（启动时带了 --no-laya）；"
+                               "请改用 Von 或 AgentJev")
         if STATUS["state"] == "error":
             raise RuntimeError("模型加载失败: %s" % STATUS["error"])
         raise RuntimeError("模型尚未就绪 (state=%s)" % STATUS["state"])
@@ -319,12 +326,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, STATUS)
         if path == "/api/models":
             ms = [{"id": "laya", "label": "Laya（本地 GPU）",
-                   "ready": STATUS.get("state") == "ready", "where": "本地"}]
+                   "ready": STATUS.get("state") == "ready", "where": "本地",
+                   "hint": "本次启动未加载 Laya" if STATUS.get("state") == "skipped" else ""}]
             ms.append({"id": "von", "label": "Von 1.1（本地 395M，最快）",
                        "ready": _probe(VON_URL, "/health"), "where": "本地"})
             ms.append({"id": "agentjev", "label": "AgentJev-0.6B（本地）",
                        "ready": _probe(AGENTJEV_URL, "/health"), "where": "本地"})
-            return self._send(200, {"models": ms, "default": "laya"})
+            return self._send(200, {"models": ms, "default": "laya",
+                                   "primary": PRIMARY_MODEL or "laya"})
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -355,6 +364,10 @@ def main():
     ap.add_argument("--device", default=os.environ.get("LAYA_DEVICE") or None)
     ap.add_argument("--subfolder", default=None, help="若 --model 是仓库且要指定子目录")
     ap.add_argument("--no-warmup", action="store_true")
+    ap.add_argument("--primary", default=None,
+                    help="本次默认使用的模型 id: laya / von / agentjev")
+    ap.add_argument("--no-laya", action="store_true",
+                    help="不加载本地 Laya 权重（只用 Von / AgentJev 时省显存）")
     ap.add_argument("--check", action="store_true", help="只加载模型做自检,不启服务")
     args = ap.parse_args()
 
@@ -363,7 +376,15 @@ def main():
     log("  设备     : %s" % (args.device or "自动 (cuda → mps → cpu)"))
 
     try:
-        load_agent(args.model, args.device, args.subfolder)
+        global PRIMARY_MODEL
+        if args.primary:
+            PRIMARY_MODEL = str(args.primary).strip().lower()
+        if args.no_laya:
+            STATUS["state"] = "skipped"
+            STATUS["model"] = "(未加载，--no-laya)"
+            log("[laya] 按 --no-laya 跳过本地模型加载")
+        else:
+            load_agent(args.model, args.device, args.subfolder)
     except Exception as e:
         log("[错误] 模型加载失败: %s" % e)
         return 2
