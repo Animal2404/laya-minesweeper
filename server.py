@@ -123,6 +123,14 @@ def warmup():
 # 前端读到后会自动选中它，用户不必再手动切一次。
 PRIMARY_MODEL = os.environ.get("PRIMARY_MODEL", "").strip().lower()
 
+# ---------------------------------------------------------------------------
+# Jev 1.13.0（云端 System One，TypeSafe 协议）
+#   协议与本地 Von 完全一致：POST /v1/systemone
+# ---------------------------------------------------------------------------
+JEV_URL = os.environ.get("JEV_URL", "https://api.knoxstudio.ai/v1").rstrip("/")
+JEV_KEY = os.environ.get("JEV_API_KEY", "").strip()
+JEV_MODEL = os.environ.get("JEV_MODEL", "jev-1.13.0")
+
 VON_URL = os.environ.get("VON_URL", "http://127.0.0.1:8150").rstrip("/")
 AGENTJEV_URL = os.environ.get("AGENTJEV_URL", "http://127.0.0.1:8149").rstrip("/")
 
@@ -156,6 +164,54 @@ def _probe(url: str, path: str, timeout=3) -> bool:
             return r.status == 200
     except Exception:
         return False
+
+
+def _http_json_auth(url: str, body: dict, headers: dict, timeout=120, tries=2):
+    import ssl
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    ctx = ssl.create_default_context()
+    try:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    except Exception:
+        pass
+    h = {"Content-Type": "application/json"}
+    h.update(headers or {})
+    last = None
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, data=data, headers=h, method="POST")
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            # 4xx 不重试（多半是 key 或参数问题），直接把服务端的话带回去
+            if 400 <= e.code < 500:
+                raise RuntimeError("HTTP %d %s" % (e.code, e.read().decode("utf-8", "replace")[:200]))
+            last = e
+        except Exception as e:
+            last = e
+        time.sleep(0.8 * (i + 1))
+    raise RuntimeError("调用失败 %s: %s" % (url, last))
+
+
+def predict_jev(payload: dict) -> dict:
+    """Jev 1.13.0：与 Von 同协议（TypeSafe /v1/systemone）。"""
+    if not JEV_KEY:
+        raise RuntimeError("未配置 JEV_API_KEY")
+    state = payload.get("state")
+    questions = payload.get("questions")
+    if state in (None, "", {}, []):
+        raise ValueError("state 不能为空")
+    if not isinstance(questions, dict) or not questions:
+        raise ValueError("questions 必须是非空对象")
+    t0 = time.perf_counter()
+    res = _http_json_auth(JEV_URL + "/systemone",
+                          {"model": JEV_MODEL, "state": state, "questions": questions},
+                          {"Authorization": "Bearer " + JEV_KEY})
+    ms = (time.perf_counter() - t0) * 1000
+    ans = res.get("answers") or res.get("results") or {}
+    return {"answers": _normalize_answers(ans, questions), "latency_ms": round(ms, 1),
+            "device": "cloud", "routing": {"model": JEV_MODEL, "backend": "jev"}}
 
 
 def predict_von(payload: dict) -> dict:
@@ -260,6 +316,8 @@ def predict(payload: dict) -> dict:
         raise ValueError("questions 太大")
 
     want = str(payload.get("backend") or payload.get("model") or "").lower()
+    if want.startswith("jev"):
+        return predict_jev(payload)
     if want.startswith("von"):
         return predict_von(payload)
     if want.startswith("agentjev") or want.startswith("jev"):
@@ -332,6 +390,9 @@ class Handler(BaseHTTPRequestHandler):
                        "ready": _probe(VON_URL, "/health"), "where": "本地"})
             ms.append({"id": "agentjev", "label": "AgentJev-0.6B（本地）",
                        "ready": _probe(AGENTJEV_URL, "/health"), "where": "本地"})
+            ms.append({"id": "jev", "label": "Jev 1.13.0（云端，最准）",
+                       "ready": bool(JEV_KEY), "where": "云端",
+                       "hint": "" if JEV_KEY else "未配置 JEV_API_KEY"})
             return self._send(200, {"models": ms, "default": "laya",
                                    "primary": PRIMARY_MODEL or "laya"})
         return self._send(404, {"error": "not found"})

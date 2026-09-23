@@ -207,6 +207,7 @@
           <option value="laya">Laya（本地 421M）</option>
           <option value="von">Von 1.1（本地 395M，最快）</option>
           <option value="agentjev">AgentJev-0.6B（本地）</option>
+          <option value="jev">Jev 1.13.0（云端，最准）</option>
         </select>
       </div>
       <div class="selwrap">
@@ -2346,7 +2347,7 @@ async function doStep(useLaya) {
   try {
     // ===== 纯 AI 模式：完全不问求解器，棋盘画成文字交给模型 =====
     if (DECIDE === 'ai') {
-      const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev'}[MODEL] || MODEL;
+      const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev', jev:'Jev 1.13.0'}[MODEL] || MODEL;
       if (!board.started) {
         // 开局：中间附近随机开一格（模型此时没有任何信息可推理）
         const r = Math.max(2, Math.min(ROWS - 3, Math.round(ROWS / 2)));
@@ -2464,7 +2465,7 @@ async function doStep(useLaya) {
 
     let layaRes = null, err = null;
     if (useLaya) {
-      setStatus(`正在求解数学约束并询问 ${{laya:'Laya',von:'Von',agentjev:'AgentJev'}[MODEL] || MODEL}`, true);
+      setStatus(`正在求解数学约束并询问 ${{laya:'Laya',von:'Von',agentjev:'AgentJev',jev:'Jev 1.13.0'}[MODEL] || MODEL}`, true);
       try {
         layaRes = await askLaya(board, useKeys);
         lastInferMs = layaRes.ms;
@@ -2539,7 +2540,7 @@ async function doStep(useLaya) {
     }
 
     const pickTxt = Number.isFinite(mv.p) ? (100 * mv.p).toFixed(1) + '%' : '未知';
-    const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev'}[MODEL] || MODEL;
+    const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev', jev:'Jev 1.13.0'}[MODEL] || MODEL;
     let msg = `无法唯一确定 → <b>猜测</b> R${pr + 1}C${pc + 1}（P(雷) ${pickTxt}）`;
     if (usedModel) {
       if (chooseBy === 'model') msg += ` · <b>${MNAME} 改选了这一格</b>`;
@@ -2812,7 +2813,7 @@ function initModelSel() {
     dsel.onchange = () => {
       DECIDE = dsel.value;
       try { localStorage.setItem('laya-ms-decide', DECIDE); } catch (e) {}
-      const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev'}[MODEL] || MODEL;
+      const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev', jev:'Jev 1.13.0'}[MODEL] || MODEL;
       setStatus(DECIDE === 'ai'
         ? `<b>纯 AI 模式</b>：求解器不再参与，每一步都由 <b>${MNAME}</b> 自己选格子。`
         : `已切回<b>求解器模式</b>：走法由约束求解器决定。`);
