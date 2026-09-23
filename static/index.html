@@ -2687,16 +2687,17 @@ async function doStep(useLaya) {
     }
     const usedModel = modelUsed;
 
-    renderCmp({rows: rowsCmp, solverSafe: [], layaTop: layaBest, keys: useKeys.length,
+    // 对比表已移除，renderCmp 是空函数；保留调用只为兼容旧调用点
+    renderCmp({rows: rowsCmp, solverSafe: [], modelTop: modelBest, keys: useKeys.length,
       solutions: sol ? sol.solutions : 0, enumCells: sol ? sol.enumCells : 0,
-      layaMs: layaRes && layaRes.ms, agreeTop: layaBest ? (layaBest === solverBest) : null,
-      note: err ? ('Laya 调用失败：' + err + '（只显示数学真值）') : ''});
+      inferMs: layaRes && layaRes.ms, agreeTop: modelBest ? (modelBest === solverBest) : null,
+      note: err ? ('模型调用失败：' + err + '（只显示数学真值）') : ''});
 
     const hit = applyMove(board, mv);
     board.steps++;
-    if (layaBest) {
+    if (modelBest) {
       stats.layaTop++;
-      if (!(layaBest === solverBest && hit.hitMine)) stats.layaTopOK++;
+      if (!(modelBest === solverBest && hit.hitMine)) stats.layaTopOK++;
     }
 
     const pickTxt = Number.isFinite(mv.p) ? (100 * mv.p).toFixed(1) + '%' : '未知';
