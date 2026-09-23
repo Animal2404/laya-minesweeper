@@ -2286,45 +2286,199 @@ function aiCandidates(b, cap) {
  * 纯模型决策：完全不问求解器，直接把棋盘画成文字，让模型挑一格。
  * 返回 {key, p, ms, model} 或抛错。
  */
-async function aiPick(b, cap) {
-  const cands = aiCandidates(b, cap || 24);
-  if (!cands.length) throw new Error('没有可选的格子了');
-  const state = boardText(b);
-  const q = {
-    type: 'choice',
-    instructions: '下一格应该揭开哪一个？挑一个最不可能埋着地雷的格子。'
-                + '只根据上面棋盘里的数字推理，不要猜。',
-    criteria: {},
-  };
-  for (const k of cands) {
-    const [r, c] = key2rc(k);
-    q.criteria['c_' + k] = `第 ${r + 1} 行第 ${c + 1} 列`;
+/**
+ * ============================================================================
+ * 完全对齐 pig-mesh/laya-java 的 MinesPlanner 做法
+ *
+ * 字节码还原出来的真实分工（不是让模型从零推理棋盘）：
+ *   1. 从可见数字建约束
+ *   2. 枚举合法布局算每格雷概率（数学）
+ *   3. 采样若干"雷分布世界"，用 forecast() 估 N 步存活率
+ *   4. 候选按 certainSafe -> mineProbability -> survival 排序
+ *   5. 候选 <= 1 个时直接走 rules 分支，**不问模型**
+ *   6. 否则把数学结果**写进选项文字**交给模型，模型只做最终取舍
+ *
+ * 发给模型的请求（逐字对齐）：
+ *   state  = {game:"Minesweeper", remaining_hidden:N, lookahead:D}
+ *   qid    = "move", type = "choice"
+ *   instructions = "Choose a cell to reveal. Prefer proven safe cells,
+ *                   then lower mine risk and higher multi-step survival."
+ *   选项文字 = "Row %d column %d. Mine risk %.4f.
+ *              Estimated survival for %d clicks %.4f. Logically safe: %s."
+ * ============================================================================
+ */
+
+/** 采样：从当前解空间随机抽 count 个合法"雷分布"（对齐 Posterior.sample）。
+ *  Bitset -> Set of bomb keys，1-based 的 cell index 用 r*COLS+c 表示。 */
+function sampleWorlds(b, sol, count) {
+  const worlds = [];
+  // 用求解器给出的每格概率做拒绝采样：概率 0/1 的格子固定，其余按概率抽样
+  const unknown = [];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const x = b.cells[r][c];
+    if (x.op || x.flag) continue;
+    unknown.push({k: r + ',' + c, p: sol.probs.has(r + ',' + c)
+        ? sol.probs.get(r + ',' + c) : null});
   }
-  const body = JSON.stringify({state, questions: {'pick': q}, model: MODEL});
+  const minesLeft = MINES - b.flags;
+  for (let t = 0; t < count; t++) {
+    const set = new Set();
+    // 先放必然雷
+    for (const u of unknown) if (u.p !== null && u.p >= 1 - 1e-9) set.add(u.k);
+    // 其余按概率独立抽样，再用总数校正
+    const rest = unknown.filter(u => !(u.p !== null && (u.p <= 1e-9 || u.p >= 1 - 1e-9)));
+    for (const u of rest) {
+      const p = (u.p === null) ? (minesLeft / Math.max(1, unknown.length)) : u.p;
+      if (Math.random() < p) set.add(u.k);
+    }
+    // 校正到恰好 minesLeft 颗（多了随机删，少了随机加）
+    const pool = rest.map(u => u.k);
+    let guard = 0;
+    while (set.size > minesLeft && pool.length && guard++ < 5000) {
+      const k = pool[Math.floor(Math.random() * pool.length)];
+      if (set.has(k)) set.delete(k);
+    }
+    guard = 0;
+    while (set.size < minesLeft && pool.length && guard++ < 5000) {
+      const k = pool[Math.floor(Math.random() * pool.length)];
+      if (!set.has(k)) set.add(k);
+    }
+    worlds.push(set);
+  }
+  return worlds;
+}
+
+/**
+ * 对齐 MinesPlanner.forecast：估计「在 worlds 这批世界里，点开 cell 后还能安全走 depth 步」的比率。
+ *   worlds  采样出的世界集合
+ *   order   候选顺序（用来决定递归时试哪些格子）
+ *   cell    当前要评估的格子（索引，r*COLS+c）
+ *   depth   剩余推演深度
+ * 返回存活比率 [0,1]。
+ */
+function forecast(worlds, order, cell, depth) {
+  const groups = new Map();          // 邻居雷数 -> 世界列表
+  let safeCount = 0;
+  for (const w of worlds) {
+    if (w.has(cell)) continue;       // 这个世界里这格是雷 → 不算存活
+    safeCount++;
+    const r = Math.floor(cell / COLS), c = cell % COLS;
+    let n = 0;
+    for (const [rr, cc] of board.nb(r, c)) if (w.has(rr + ',' + cc)) n++;
+    if (!groups.has(n)) groups.set(n, []);
+    groups.get(n).push(w);
+  }
+  const total = worlds.length;
+  if (total === 0) return 0;
+  // 深度到底 / 只剩一个世界 / 邻居雷数只有一种 → 直接返回存活比例
+  if (depth === 1 || worlds.length === 1 || groups.size <= 1) return safeCount / total;
+
+  let acc = 0;
+  for (const [, ws] of groups) {
+    // 每个分组里挑最多 2 个"最有代表性"的世界，递归取最大存活
+    const picks = ws.slice(0, 2);
+    let best = 0;
+    for (const w of picks) {
+      // order 里剩下的候选，逐个试 depth-1
+      for (const nx of order) {
+        if (nx === cell) continue;
+        best = Math.max(best, forecast([w], order, nx, depth - 1));
+        if (best >= 1) break;
+      }
+      if (best >= 1) break;
+    }
+    acc += ws.length * best;
+  }
+  return acc / total;
+}
+
+/** 构造候选（对齐 MinesPlanner.Candidate：id/row/col/mineProbability/survival/certainSafe） */
+function buildCandidates(b, sol, depth) {
+  const cands = [];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const x = b.cells[r][c];
+    if (x.op || x.flag) continue;
+    const k = r + ',' + c;
+    const p = sol.probs.has(k) ? sol.probs.get(k) : null;
+    // certainSafe 直接读 solver 的 safe 集合，比浮点比较可靠
+    const certainSafe = sol.safe.has(k) || (p !== null && p <= 1e-9);
+    // 没算出概率的格子（远离数字的"自由格"）用全局密度估计，
+    // 不能当成"一定有雷" —— 那会让排序完全反过来。
+    const est = Number.isFinite(p) ? p : gp0(b);
+    cands.push({id: 'r' + r + 'c' + c, row: r, col: c,
+                mineProbability: est, hasExact: Number.isFinite(p),
+                survival: 0, certainSafe});
+  }
+  // 排序：确定安全优先 -> 雷概率低 -> 行/列（保证稳定）
+  cands.sort((a2, b2) => (b2.certainSafe - a2.certainSafe)
+      || (b2.hasExact - a2.hasExact)                    // 精确概率优先于密度估计
+      || (a2.mineProbability - b2.mineProbability)
+      || (a2.row - b2.row) || (a2.col - b2.col));
+  // 只给前若干个候选算存活率（全算太慢）
+  const CAP2 = 12;
+  const worlds = sampleWorlds(b, sol, 40);
+  const orderKeys = cands.map(cd => cd.row * COLS + cd.col);
+  for (let i = 0; i < Math.min(CAP2, cands.length); i++) {
+    const cd = cands[i];
+    cd.survival = forecast(worlds, orderKeys, cd.row * COLS + cd.col, depth);
+  }
+  for (let i = CAP2; i < cands.length; i++) cands[i].survival = 0;
+  return cands;
+}
+
+/**
+ * 对齐 MinesPlanner.decide：数学先算，模型后选。
+ * 返回 {source, selected, candidates, note, ms}
+ *   source = 'rules'     候选<=1，或模型不可用 → 走数学
+ *   source = 'model'     模型从候选中选的
+ */
+async function decideMove(b, depth) {
+  const sol = solve(b, depth);
+  if (!sol || !sol.probs) throw new Error('求解器无结果');
+  const cands = buildCandidates(b, sol, depth);
+  if (!cands.length) return {source: 'rules', selected: null, candidates: [], note: '已揭开所有安全格'};
+
+  // 对齐 jar：候选 <= 1 个时不问模型
+  if (cands.length <= 1) {
+    return {source: 'rules', selected: cands[0], candidates: cands, ms: 0, note: ''};
+  }
+  // 有确定安全格时也走 rules（jar 里 first.certainSafe 直接给 rules）
+  if (cands[0].certainSafe) {
+    return {source: 'rules', selected: cands[0], candidates: cands, ms: 0,
+            note: '规则确定安全'};
+  }
+
+  // ---- 问模型：数学结果写进选项文字 ----
+  const MNAME = {laya:'Laya', von:'Von', agentjev:'AgentJev', jev:'Jev 1.13.0'}[MODEL] || MODEL;
+  const state = {game: 'Minesweeper',
+                 remaining_hidden: cands.length,
+                 lookahead: depth};
+  const q = {type: 'choice',
+    instructions: 'Choose a cell to reveal. Prefer proven safe cells, '
+                + 'then lower mine risk and higher multi-step survival.',
+    criteria: {}};
+  const TOP = Math.min(8, cands.length);   // 只把前 8 个候选给模型（对齐它的候选集）
+  for (let i = 0; i < TOP; i++) {
+    const cd = cands[i];
+    q.criteria[cd.id] = `Row ${cd.row + 1} column ${cd.col + 1}. `
+      + `Mine risk ${cd.mineProbability.toFixed(4)}. `
+      + `Estimated survival for ${depth} clicks ${cd.survival.toFixed(4)}. `
+      + `Logically safe: ${cd.certainSafe}.`;
+  }
+  const body = JSON.stringify({state, questions: {move: q}, model: MODEL});
   const t0 = performance.now();
   const res = await fetch(API, {method: 'POST', headers: {'Content-Type': 'application/json'}, body});
   const ms = performance.now() - t0;
   if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text()).slice(0, 140));
   const data = await res.json();
-  const a = (data.answers || {}).pick || {};
-  const probs = a.probabilities || {};
-  let best = null, bestP = Infinity;
-  for (const k of cands) {
-    const v = probs['c_' + k];
-    if (Number.isFinite(v) && v < bestP) { bestP = v; best = k; }
-  }
-  if (!best) {
-    // 模型没给概率时退回它的 choice 字段
-    const ch = String(a.choice || '');
-    best = cands.find(k => ch === 'c_' + k) || null;
-    bestP = NaN;
-  }
-  if (!best) throw new Error('模型没有给出有效的格子');
-  return {key: best, p: bestP, ms, model: MODEL,
-          choice: a.choice, conf: a.confidence};
+  const chosenId = String(((data.answers || {}).move || {}).choice || '');
+  const picked = cands.slice(0, TOP).find(cd => cd.id === chosenId);
+  if (!picked) throw new Error(MNAME + ' 没有返回有效候选');
+  return {source: 'model', selected: picked, candidates: cands, ms, model: MNAME,
+          agreeTop: picked === cands[0]};
 }
 
-/** 现有棋盘的粗略密度：剩余雷数 / 剩余未知格数 */
+/** 现有棋盘的粗略密度：剩余雷数 / 剩余未知格数 *//** 现有棋盘的粗略密度：剩余雷数 / 剩余未知格数 */
 function gp0(b) {
   const hidden = countHidden(b);
   const left = MINES - b.flags;
@@ -2358,25 +2512,31 @@ async function doStep(useLaya) {
         paint();
         return;
       }
-      setStatus(`<b>纯 ${MNAME} 模式</b>：正在把棋盘交给 ${MNAME} 选格子…`, true);
-      let pick;
+      setStatus(`<b>${MNAME} 模式</b>：正在计算约束，然后请 ${MNAME} 从候选里选…`, true);
+      let plan;
       try {
-        pick = await aiPick(board, 24);
-        lastInferMs = pick.ms;
-        perf.infer.push(pick.ms);
-        if (perf.infer.length > 400) perf.infer.shift();
+        plan = await decideMove(board, +el('depth').value);
+        lastInferMs = plan.ms || 0;
+        if (plan.ms) { perf.infer.push(plan.ms); if (perf.infer.length > 400) perf.infer.shift(); }
       } catch (e) {
-        setStatus(`<b>${MNAME}</b> 调用失败：${String(e.message || e).slice(0, 120)}`);
+        setStatus(`<b>${MNAME}</b> 调用失败：${String(e.message || e).slice(0, 130)}`);
         if (auto) stopAuto();
         return;
       }
-      const [rr, cc] = key2rc(pick.key);
-      const hit = applyMove(board, {kind:'reveal', key: pick.key, certain:false, p:pick.p});
+      if (!plan.selected) { setStatus('已揭开所有安全格。'); stopAuto(); return; }
+      const cd = plan.selected;
+      const hit = applyMove(board, {kind:'reveal', key: cd.row + ',' + cd.col,
+                                    certain: cd.certainSafe, p: cd.mineProbability});
       board.steps++;
-      const ptxt = Number.isFinite(pick.p) ? (100 * pick.p).toFixed(1) + '%' : '未知';
-      setStatus(`<b>纯 ${MNAME} 模式</b> → ${MNAME} 选了 R${rr + 1}C${cc + 1}`
-              + `（它给的 P(雷) ${ptxt}，耗时 ${pick.ms.toFixed(0)} 毫秒）`
-              + (hit.hitMine ? ' —— <b>踩雷了</b>' : ''));
+      const rr = cd.row, cc = cd.col;
+      const srcTxt = plan.source === 'model'
+        ? `<b>${MNAME} 选择</b>` + (plan.agreeTop ? '（与数学一致）' : '（<b>改了数学的首选</b>）')
+        : (cd.certainSafe ? '<b>规则确定安全</b>' : '<b>数学选择</b>');
+      setStatus(`${srcTxt} → R${rr + 1}C${cc + 1}`
+              + `　雷概率 ${(100 * cd.mineProbability).toFixed(2)}%`
+              + `　${plan.candidates.length > 1 ? (+el('depth').value + ' 步存活 ' + (100 * cd.survival).toFixed(1) + '%') : ''}`
+              + (plan.ms ? `　${plan.ms.toFixed(0)} 毫秒` : '')
+              + (hit.hitMine ? '　—— <b>踩雷了</b>' : ''));
       paint();
       return;
     }
