@@ -111,49 +111,68 @@ def warmup():
 
 
 # ---------------------------------------------------------------------------
-# Jev（System One 云端模型，可选）
+# 本地 System One 决策模型（可选后端）
 #
-# 与 Laya 一样是"结构化决策"模型：给一段 state + 若干问题，直接返回
-# 概率/置信度，不生成文本。通过环境变量配置，未配置时该项在界面上不可选。
-#   JEV_API_KEY   必填，没有就不注册这个后端
-#   JEV_BASE_URL  默认 https://omnilabs.vibeadmin.cn/v1
-#   JEV_MODEL     默认 jev-latest
+#   von        Von 1.1（395M，ModernBERT）   POST /v1/systemone   约 20ms
+#   agentjev   AgentJev-0.6B（Qwen3 骨架）   POST /api/evaluate   约 1.2s
+#
+# 两者都与 Laya 一样：给 state + questions，直接返回概率分布，不生成文本。
+# 通过环境变量配置地址；探不通就不注册该后端。
 # ---------------------------------------------------------------------------
-JEV_KEY = os.environ.get("JEV_API_KEY", "").strip()
-JEV_BASE = os.environ.get("JEV_BASE_URL", "https://omnilabs.vibeadmin.cn/v1").rstrip("/")
-JEV_MODEL = os.environ.get("JEV_MODEL", "jev-latest")
+VON_URL = os.environ.get("VON_URL", "http://127.0.0.1:8150").rstrip("/")
+AGENTJEV_URL = os.environ.get("AGENTJEV_URL", "http://127.0.0.1:8149").rstrip("/")
 
 
-def _jev_post(path: str, body: dict, timeout=90):
-    """调 Jev。网络不稳，带重试。"""
+def _http_json(url: str, body: dict, timeout=120, tries=2):
     import ssl
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     ctx = ssl.create_default_context()
     try:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     except Exception:
         pass
-    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     last = None
-    for i in range(3):
+    for i in range(tries):
         try:
-            req = urllib.request.Request(
-                JEV_BASE + path, data=data,
-                headers={"Authorization": "Bearer " + JEV_KEY,
-                         "Content-Type": "application/json"},
-                method="POST")
+            req = urllib.request.Request(url, data=data,
+                                         headers={"Content-Type": "application/json"},
+                                         method="POST")
             with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
                 return json.loads(r.read().decode("utf-8"))
         except Exception as e:
             last = e
-            time.sleep(1.5 * (i + 1))
-    raise RuntimeError("Jev 调用失败: %s" % last)
+            time.sleep(0.6 * (i + 1))
+    raise RuntimeError("调用失败 %s: %s" % (url, last))
 
 
-def predict_jev(payload: dict) -> dict:
-    """把同样的 state/questions 转发给 Jev，并归一化成与 Laya 一致的返回结构。"""
-    if not JEV_KEY:
-        raise RuntimeError("未配置 JEV_API_KEY")
+def _probe(url: str, path: str, timeout=3) -> bool:
+    try:
+        with urllib.request.urlopen(url + path, timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def predict_von(payload: dict) -> dict:
+    """Von：协议与 TypeSafe /v1/systemone 一致。"""
+    state = payload.get("state")
+    questions = payload.get("questions")
+    if state in (None, "", {}, []):
+        raise ValueError("state 不能为空")
+    if not isinstance(questions, dict) or not questions:
+        raise ValueError("questions 必须是非空对象")
+    t0 = time.perf_counter()
+    res = _http_json(VON_URL + "/v1/systemone",
+                     {"model": "von-1.1.0", "state": state, "questions": questions})
+    ms = (time.perf_counter() - t0) * 1000
+    ans = res.get("answers") or res.get("results") or {}
+    return {"answers": _normalize_answers(ans, questions), "latency_ms": round(ms, 1),
+            "device": "local", "routing": {"model": "von-1.1", "backend": "von"}}
+
+
+def predict_agentjev(payload: dict) -> dict:
+    """AgentJev：questions 是**数组**，选项放在 options 里。"""
     state = payload.get("state")
     questions = payload.get("questions")
     if state in (None, "", {}, []):
@@ -161,30 +180,57 @@ def predict_jev(payload: dict) -> dict:
     if not isinstance(questions, dict) or not questions:
         raise ValueError("questions 必须是非空对象")
 
+    qs = []
+    for qid, q in questions.items():
+        item = {"id": qid, "type": q.get("type", "choice"),
+                "question": q.get("instructions") or q.get("question") or qid}
+        if item["type"] == "choice":
+            crit = q.get("criteria") or {}
+            if isinstance(crit, dict):
+                item["options"] = [{"id": str(k), "text": str(v)} for k, v in crit.items()]
+            else:
+                item["options"] = [{"id": str(i), "text": str(v)} for i, v in enumerate(crit)]
+        elif item["type"] == "score":
+            crit = q.get("criteria") or []
+            item["options"] = [{"id": str(i), "text": str(v)} for i, v in enumerate(crit)]
+        qs.append(item)
+
     t0 = time.perf_counter()
-    # Jev 的 System One 端点：POST /v1/systemone
-    body = {"model": JEV_MODEL, "state": state, "questions": questions}
-    try:
-        res = _jev_post("/systemone", body)
-    except Exception:
-        # 端点名可能不同，退回 chat/completions（让服务端自己解析结构化问题）
-        res = _jev_post("/chat/completions", {
-            "model": JEV_MODEL,
-            "messages": [{"role": "user", "content":
-                          json.dumps({"state": state, "questions": questions},
-                                     ensure_ascii=False)}],
-            "response_format": {"type": "json_object"},
-        })
+    res = _http_json(AGENTJEV_URL + "/api/evaluate", {"requests": [{"state": state, "questions": qs}]})
     ms = (time.perf_counter() - t0) * 1000
 
-    # 归一化：接受 {answers:{...}} / {choices:{...}} / 直接 {qid:...} 三种形态
-    ans = res.get("answers") or res.get("choices") or res
-    if isinstance(ans, list):                       # OpenAI 风格
-        try:
-            ans = json.loads(ans[0]["message"]["content"])
-            ans = ans.get("answers") or ans
-        except Exception:
-            ans = {}
+    # 归一化：把 distribution 的索引映射回 criteria 的键
+    out = {}
+    results = res.get("results") or []
+    if results and isinstance(results[0], dict):
+        for a in (results[0].get("answers") or []):
+            qid = a.get("id")
+            q = questions.get(qid, {})
+            dist = a.get("distribution") or {}
+            if q.get("type") == "noul":
+                out[qid] = {"noul": float(a.get("top_probability", 0.5))}
+            elif q.get("type") == "score":
+                probs = {str(i): float(v) for i, v in dist.items()}
+                out[qid] = {"probabilities": probs, "type": "score"}
+            else:
+                crit = q.get("criteria") or {}
+                keys = list(crit.keys()) if isinstance(crit, dict) else list(range(len(crit or [])))
+                probs = {}
+                for idx, p in dist.items():
+                    try:
+                        k = keys[int(idx)]
+                    except Exception:
+                        k = str(idx)
+                    probs[str(k)] = float(p)
+                best = max(probs.items(), key=lambda kv: kv[1])[0] if probs else None
+                out[qid] = {"choice": best, "confidence": max(probs.values()) if probs else 0.0,
+                            "probabilities": probs}
+    return {"answers": out, "latency_ms": round(ms, 1),
+            "device": "local", "routing": {"model": "AgentJev-0.6B", "backend": "agentjev"}}
+
+
+def _normalize_answers(ans, questions) -> dict:
+    """把各后端的返回统一成 {qid: {choice|noul|probabilities}}。"""
     out = {}
     for qid, q in questions.items():
         a = ans.get(qid) if isinstance(ans, dict) else None
@@ -196,8 +242,7 @@ def predict_jev(payload: dict) -> dict:
             out[qid] = {"choice": a, "confidence": 1.0}
         else:
             out[qid] = {"noul": 0.5} if q.get("type") == "noul" else {"choice": None}
-    return {"answers": out, "latency_ms": round(ms, 1),
-            "device": "cloud", "routing": {"model": JEV_MODEL, "backend": "jev"}}
+    return out
 
 
 def predict(payload: dict) -> dict:
@@ -211,8 +256,10 @@ def predict(payload: dict) -> dict:
         raise ValueError("questions 太大")
 
     want = str(payload.get("backend") or payload.get("model") or "").lower()
-    if want in ("jev", "jev-latest") or want.startswith("jev"):
-        return predict_jev(payload)
+    if want.startswith("von"):
+        return predict_von(payload)
+    if want.startswith("agentjev") or want.startswith("jev"):
+        return predict_agentjev(payload)
 
     agent = AGENT
     if agent is None:
@@ -271,11 +318,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             return self._send(200, STATUS)
         if path == "/api/models":
-            ms = [{"id": "laya", "label": "Laya（本地 %s）" % STATUS.get("model", ""),
-                   "ready": STATUS.get("state") == "ready", "where": "本地 GPU"}]
-            ms.append({"id": "jev", "label": "Jev（云端 %s）" % JEV_MODEL,
-                       "ready": bool(JEV_KEY), "where": "云端",
-                       "hint": "" if JEV_KEY else "未配置 JEV_API_KEY"})
+            ms = [{"id": "laya", "label": "Laya（本地 GPU）",
+                   "ready": STATUS.get("state") == "ready", "where": "本地"}]
+            ms.append({"id": "von", "label": "Von 1.1（本地 395M，最快）",
+                       "ready": _probe(VON_URL, "/health"), "where": "本地"})
+            ms.append({"id": "agentjev", "label": "AgentJev-0.6B（本地）",
+                       "ready": _probe(AGENTJEV_URL, "/health"), "where": "本地"})
             return self._send(200, {"models": ms, "default": "laya"})
         return self._send(404, {"error": "not found"})
 

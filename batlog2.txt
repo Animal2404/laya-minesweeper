@@ -34,3 +34,59 @@ E:\DeepSeek\laya-local\.venv\Lib\site-packages\laya\agent.py:385: RuntimeWarning
   打开页面 : http://127.0.0.1:8080/
   健康检查 : http://127.0.0.1:8080/api/health
   Ctrl+C 停止
+Traceback (most recent call last):
+  File "E:\DeepSeek\laya-minesweeper\server.py", line 292, in do_POST
+    return self._send(200, predict(payload))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DeepSeek\laya-minesweeper\server.py", line 252, in _send
+    self.wfile.write(body)
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\socketserver.py", line 845, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 11252)
+Traceback (most recent call last):
+  File "E:\DeepSeek\laya-minesweeper\server.py", line 292, in do_POST
+    return self._send(200, predict(payload))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DeepSeek\laya-minesweeper\server.py", line 252, in _send
+    self.wfile.write(body)
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\socketserver.py", line 845, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\socketserver.py", line 766, in __init__
+    self.handle()
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\http\server.py", line 438, in handle
+    self.handle_one_request()
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\http\server.py", line 424, in handle_one_request
+    method()
+  File "E:\DeepSeek\laya-minesweeper\server.py", line 298, in do_POST
+    return self._send(500, {"error": "%s: %s" % (type(e).__name__, e)})
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\DeepSeek\laya-minesweeper\server.py", line 251, in _send
+    self.end_headers()
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\http\server.py", line 538, in end_headers
+    self.flush_headers()
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\http\server.py", line 542, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\axia\AppData\Local\Programs\Python\Python312\Lib\socketserver.py", line 845, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+----------------------------------------
+Laya Minesweeper
+  模型     : convaiinnovations/laya
+  设备     : 自动 (cuda → mps → cpu)
+Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 5 files:  20%|██        | 1/5 [00:00<00:02,  1.38it/s]Fetching 5 files:  40%|████      | 2/5 [00:11<00:19,  6.37s/it]Fetching 5 files:  80%|████████  | 4/5 [00:11<00:02,  2.50s/it]
+============================================================
+   Server stopped, exit code -1
+============================================================
+�밴���������. . . 

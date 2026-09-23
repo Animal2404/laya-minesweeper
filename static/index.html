@@ -197,8 +197,9 @@
       <div class="selwrap">
         <label for="modelSel">模型</label>
         <select id="modelSel" title="用哪个模型做参考判断">
-          <option value="laya">Laya（本地）</option>
-          <option value="jev">Jev（云端）</option>
+          <option value="laya">Laya（本地 421M）</option>
+          <option value="von">Von 1.1（本地 395M，最快）</option>
+          <option value="agentjev">AgentJev-0.6B（本地）</option>
         </select>
       </div>
       <div class="selwrap">
@@ -209,7 +210,7 @@
           <option value="system">跟随系统</option>
         </select>
       </div>
-      <button id="btnAuto" class="primary">让 Laya 来玩</button>
+      <button id="btnAuto" class="primary">让 AI 来玩</button>
       <button id="btnStep">预测一步</button>
       <button id="btnReset">重新开局</button>
       <div class="selwrap">
@@ -257,7 +258,7 @@
   <div class="boardwrap"><div class="board" id="board"></div></div>
 
   <div class="statusrow">
-    <div class="status" id="status">准备好了。点「让 Laya 来玩」或自己点格子。</div>
+    <div class="status" id="status">准备好了。点「让 AI 来玩」或自己点格子。</div>
     <div class="stuck" id="stuck"></div>
   </div>
 
@@ -303,10 +304,10 @@
   </div>
 
   <div class="note">
-    <b>怎么玩：</b>右键插旗，左键揭格，双击数字格可一键展开周围。点「让 Laya 来玩」让求解器自动打。<br>
+    <b>怎么玩：</b>右键插旗，左键揭格，双击数字格可一键展开周围。点「让 AI 来玩」让求解器自动打。<br>
     <b>谁在做决策：</b>求解器。它把每个已揭开的数字当成一条等式（「我周围还有 N 颗雷，分布在 M 个未知格里」），
     联立所有等式做枚举，算出每个未知格的<b>精确</b>含雷概率。概率 0 就是绝对安全，概率 1 就是必然有雷。<br>
-    <b>Laya 做什么：</b>只在<b>猜</b>的时候被询问，作为参考。它不参与决策 —— 实测它对不同概率的格子都回答 ~51%，没有区分度。<br>
+    <b>参考模型做什么：</b>只在<b>猜</b>的时候被询问，作为参考。它不参与决策 —— 实测它对不同概率的格子都回答 ~51%，没有区分度。<br>
     <b>旗子：</b>橙色圆点旗是求解器自动插的，红色旗是你手动插的。插旗会让约束更紧，对求解<b>有帮助</b>，所以求解器会主动插。
   </div>
 
@@ -1340,7 +1341,7 @@ function applyBoard(cols, rows, mines) {
   lastSolveMs = lastInferMs = null;
   solverFlags.clear(); clearPreview();
   buildGrid(); renderCmp(null); paint();
-  setStatus(`新棋盘：${COLS}×${ROWS} = <b>${COLS*ROWS}</b> 格，${MINES} 颗雷（密度 ${(density()*100).toFixed(1)}%）。点「让 Laya 来玩」或自己点格子。`);
+  setStatus(`新棋盘：${COLS}×${ROWS} = <b>${COLS*ROWS}</b> 格，${MINES} 颗雷（密度 ${(density()*100).toFixed(1)}%）。点「让 AI 来玩」或自己点格子。`);
   syncLevelSelect();
 }
 
@@ -2327,7 +2328,7 @@ async function doStep(useLaya) {
 
     let layaRes = null, err = null;
     if (useLaya) {
-      setStatus('正在求解数学约束并询问 Laya', true);
+      setStatus(`正在求解数学约束并询问 ${{laya:'Laya',von:'Von',agentjev:'AgentJev'}[MODEL] || MODEL}`, true);
       try {
         layaRes = await askLaya(board, useKeys);
         lastInferMs = layaRes.ms;
@@ -2461,7 +2462,7 @@ function startAuto() {
 }
 function stopAuto() {
   auto = false;
-  el('btnAuto').textContent = '让 Laya 来玩';
+  el('btnAuto').textContent = '让 AI 来玩';
   if (timerId) { clearTimeout(timerId); timerId = null; }
 }
 async function tick() {
